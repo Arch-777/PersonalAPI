@@ -4,6 +4,7 @@ import { Search, MessageSquare, ShieldCheck, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useScrollReveal } from "@/hooks/use-scroll-reveal";
 import { useTheme } from "next-themes";
+import { IntegrationsCarousel } from "./integrations-carousel";
 
 const features = [
   {
@@ -232,6 +233,12 @@ export function FeaturesSection() {
             </div>
           ))}
         </div>
+
+      </div>
+
+      {/* Seamless Integrations Ticker */}
+      <div className="w-full mt-16 sm:mt-24">
+        <IntegrationsCarousel />
       </div>
     </section>
   );
