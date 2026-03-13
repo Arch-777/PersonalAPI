@@ -975,32 +975,6 @@ X-API-Key: pk_live_xxxxxxxxxx
 
 ---
 
-### WhatsApp Connector Setup
-
-WhatsApp does not use OAuth. Instead, connect it by bootstrapping the connector with your custom WhatsApp API endpoint and access token.
-
-```
-POST /v1/connectors/whatsapp/bootstrap
-Authorization: Bearer <access_token>
-Content-Type: application/json
-```
-
-**Body**
-```json
-{
-  "access_token": "your-whatsapp-api-token",
-  "metadata_json": {
-    "messages_endpoint": "https://your-whatsapp-server.example.com/api/messages"
-  }
-}
-```
-
-**Response `201`** — ConnectorResponse (same shape as `GET /v1/connectors/{platform}`)
-
-After bootstrapping, trigger sync with `POST /v1/connectors/whatsapp/sync`.
-
----
-
 ## Error Response Format
 
 All errors follow this shape:

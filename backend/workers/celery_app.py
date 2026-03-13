@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 QUEUE_DEFAULT = "default"
 QUEUE_GOOGLE = "connector.google"
-QUEUE_WHATSAPP = "connector.whatsapp"
 QUEUE_NOTION = "connector.notion"
 QUEUE_SPOTIFY = "connector.spotify"
 QUEUE_SLACK = "connector.slack"
@@ -27,7 +26,6 @@ QUEUE_EMBEDDING = "pipeline.embedding"
 ALL_QUEUES = (
     QUEUE_DEFAULT,
     QUEUE_GOOGLE,
-    QUEUE_WHATSAPP,
     QUEUE_NOTION,
     QUEUE_SPOTIFY,
     QUEUE_SLACK,
@@ -37,7 +35,6 @@ ALL_QUEUES = (
 
 TASK_ROUTES = {
     "workers.google_worker.*": {"queue": QUEUE_GOOGLE},
-    "workers.whatsapp_worker.*": {"queue": QUEUE_WHATSAPP},
     "workers.notion_worker.*": {"queue": QUEUE_NOTION},
     "workers.spotify_worker.*": {"queue": QUEUE_SPOTIFY},
     "workers.slack_worker.*": {"queue": QUEUE_SLACK},
@@ -101,7 +98,6 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "workers.google_worker",
-        "workers.whatsapp_worker",
         "workers.notion_worker",
         "workers.spotify_worker",
         "workers.slack_worker",

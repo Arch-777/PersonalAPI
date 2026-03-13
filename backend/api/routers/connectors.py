@@ -28,7 +28,6 @@ PLATFORM_TO_TASK = {
     "gmail": "workers.google_worker.sync_gmail",
     "drive": "workers.google_worker.sync_drive",
     "gcal": "workers.google_worker.sync_gcal",
-    "whatsapp": "workers.whatsapp_worker.sync_whatsapp",
     "notion": "workers.notion_worker.sync_notion",
     "spotify": "workers.spotify_worker.sync_spotify",
     "slack": "workers.slack_worker.sync_slack",

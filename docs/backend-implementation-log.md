@@ -860,3 +860,32 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py -q`
 - Next:
   - Run live connector smoke tests for Google Drive and GCal against real OAuth tokens and verify repeated sync runs produce no duplicate pulls beyond idempotent upsert updates.
+
+## Step 38 - Remove WhatsApp Connector API and Worker Support
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Removed `whatsapp` from `PLATFORM_TO_TASK`, disabling WhatsApp connector bootstrap/sync routing.
+  - backend/workers/connector_sync.py:
+    - Removed WhatsApp normalizer import/registration and WhatsApp fetch branch.
+    - Removed `_fetch_whatsapp_records` implementation.
+  - backend/workers/celery_app.py:
+    - Removed `QUEUE_WHATSAPP`, WhatsApp task route, and `workers.whatsapp_worker` include.
+  - backend/workers/whatsapp_worker.py:
+    - Deleted WhatsApp worker module.
+  - backend/normalizer/whatsapp.py:
+    - Deleted WhatsApp normalizer module.
+  - backend/docker-compose.yml and backend/docker-compose.coolify.yml:
+    - Removed `worker-whatsapp` service definitions.
+  - backend/tests/test_normalizers.py:
+    - Removed WhatsApp normalizer test/import.
+  - backend/tests/test_celery_foundation.py:
+    - Removed WhatsApp queue/route/include assertions and constants.
+  - docs/FRONTEND_API_REFERENCE.md:
+    - Removed WhatsApp connector setup section to align docs with backend capability.
+- Verification:
+  - Targeted backend regression suites passed: `62 passed in 1.53s`.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py tests/test_celery_foundation.py -q`
+- Next:
+  - Optionally remove WhatsApp requests from `docs/postman/PersonalAPI.postman_collection.json` to keep Postman artifacts in sync with removed APIs.

@@ -35,7 +35,6 @@ from normalizer.gmail import GmailNormalizer
 from normalizer.notion import NotionNormalizer
 from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
-from normalizer.whatsapp import WhatsAppNormalizer
 
 
 NOTION_VERSION = "2022-06-28"
@@ -49,7 +48,6 @@ NORMALIZERS: dict[str, BaseNormalizer] = {
     "gmail": GmailNormalizer(),
     "drive": DriveNormalizer(),
     "gcal": GCalNormalizer(),
-    "whatsapp": WhatsAppNormalizer(),
     "notion": NotionNormalizer(),
     "slack": SlackNormalizer(),
     "spotify": SpotifyNormalizer(),
@@ -317,8 +315,6 @@ def _fetch_platform_records(
         return _fetch_slack_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "spotify":
         return _fetch_spotify_records(access_token=access_token, source_cursor=source_cursor)
-    if platform == "whatsapp":
-        return _fetch_whatsapp_records(access_token=access_token, source_cursor=source_cursor, connector=connector)
     raise ValueError(f"Unsupported connector platform '{platform}'")
 
 
@@ -692,30 +688,6 @@ def _fetch_slack_records(access_token: str, source_cursor: str | None) -> tuple[
 
     next_cursor_payload = {"latest_ts": newest_ts or latest_ts or "0"}
     return rows, json.dumps(next_cursor_payload, sort_keys=True)
-
-
-def _fetch_whatsapp_records(
-    access_token: str,
-    source_cursor: str | None,
-    connector: Connector,
-) -> tuple[list[dict[str, Any]], str]:
-    metadata = connector.metadata_json if isinstance(connector.metadata_json, dict) else {}
-    endpoint = metadata.get("messages_endpoint")
-    if not isinstance(endpoint, str) or not endpoint.strip():
-        return [], str(source_cursor or "0")
-
-    params: dict[str, Any] = {}
-    if source_cursor:
-        params["cursor"] = source_cursor
-
-    payload = _http_get_json(
-        url=endpoint,
-        access_token=access_token,
-        params=params,
-    )
-    rows = _extract_first_record_list(payload)
-    next_cursor = _extract_next_cursor(payload, source_cursor)
-    return rows, next_cursor
 
 
 def _parse_slack_cursor(source_cursor: str | None) -> dict[str, str]:

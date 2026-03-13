@@ -11,7 +11,6 @@ from normalizer.gmail import GmailNormalizer
 from normalizer.notion import NotionNormalizer
 from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
-from normalizer.whatsapp import WhatsAppNormalizer
 from workers import connector_sync
 
 
@@ -79,24 +78,6 @@ def test_gcal_normalizer_maps_event_fields():
 	assert item.sender_name == "Carol"
 	assert item.sender_email == "carol@example.com"
 	assert item.metadata_json["attendees_count"] == 0
-
-
-def test_whatsapp_normalizer_maps_message_fields():
-	normalizer = WhatsAppNormalizer()
-	row = {
-		"id": "wa-1",
-		"text": {"body": "Hey there"},
-		"from": "+15550001111",
-		"from_name": "Drew",
-		"timestamp": "1710000000",
-	}
-
-	item = normalizer.normalize_record(row)
-	assert item is not None
-	assert item.type == "message"
-	assert item.source_id == "wa-1"
-	assert item.sender_name == "Drew"
-	assert item.content == "Hey there"
 
 
 def test_notion_normalizer_extracts_title_from_properties():
