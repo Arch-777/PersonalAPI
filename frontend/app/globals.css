@@ -47,6 +47,37 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ============================================ */
+/* Smooth theme transition — DO NOT REMOVE      */
+/* ============================================ */
+*,
+*::before,
+*::after {
+  transition:
+    background-color 0.35s ease,
+    border-color 0.35s ease,
+    color 0.25s ease,
+    box-shadow 0.35s ease,
+    opacity 0.25s ease;
+}
+
+/* Exclude elements where transition interferes with animations */
+.animate-float,
+.animate-float *,
+.animate-marquee,
+.animate-marquee *,
+.animate-slide-up,
+.animate-slide-up *,
+.animate-shimmer,
+.reveal,
+.reveal * {
+  transition:
+    background-color 0.35s ease,
+    border-color 0.35s ease,
+    color 0.25s ease !important;
+  /* Removes transform/opacity from the wildcard rule above for these elements */
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -211,8 +242,6 @@
   background-color: transparent;
   background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.35) 1px, transparent 0);
   background-size: 20px 20px;
-  -webkit-mask-image: linear-gradient(to left, #000 0%, #000 50%, transparent 20%, transparent 100%);
-  mask-image: linear-gradient(to left, #000 0%, #000 50%, transparent 20%, transparent 100%);
 }
 
 .dark .noise-bg {

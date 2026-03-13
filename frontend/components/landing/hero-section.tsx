@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 export function HeroSection() {
   return (
     <section className="relative min-h-[90vh] flex items-center overflow-hidden">
+      <div className="noise-bg" />
       {/* Background glow */}
       <div className="hero-glow absolute inset-0 pointer-events-none" />
 
