@@ -69,7 +69,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=connector.google",
-        "--hostname=worker-google@%h"
+        "--hostname=worker-google@%h",
       ]
     depends_on:
       redis:
@@ -97,7 +97,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=connector.whatsapp",
-        "--hostname=worker-whatsapp@%h"
+        "--hostname=worker-whatsapp@%h",
       ]
     depends_on:
       redis:
@@ -125,7 +125,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=connector.notion",
-        "--hostname=worker-notion@%h"
+        "--hostname=worker-notion@%h",
       ]
     depends_on:
       redis:
@@ -153,7 +153,35 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=connector.spotify",
-        "--hostname=worker-spotify@%h"
+        "--hostname=worker-spotify@%h",
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-slack:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.slack",
+        "--hostname=worker-slack@%h",
       ]
     depends_on:
       redis:
@@ -181,7 +209,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=pipeline.file-watcher",
-        "--hostname=worker-file-watcher@%h"
+        "--hostname=worker-file-watcher@%h",
       ]
     depends_on:
       redis:
@@ -209,7 +237,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--queues=pipeline.embedding",
-        "--hostname=worker-embedding@%h"
+        "--hostname=worker-embedding@%h",
       ]
     depends_on:
       redis:

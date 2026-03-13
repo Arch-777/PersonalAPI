@@ -246,3 +246,30 @@ def test_connector_sync_queues_expected_worker_task():
 	assert called_args[2] == "0"
 
 	app.dependency_overrides.clear()
+
+
+def test_slack_connect_returns_authorize_url():
+	from unittest.mock import patch
+	from api.routers import connectors as connectors_router
+
+	app.dependency_overrides[get_current_user] = _override_user
+
+	with patch.object(
+		connectors_router,
+		"get_settings",
+		return_value=SimpleNamespace(
+			slack_client_id="client-id",
+			slack_client_secret="client-secret",
+			slack_redirect_uri="http://127.0.0.1:8000/v1/connectors/slack/callback",
+		),
+	):
+		client = TestClient(app)
+		response = client.get("/v1/connectors/slack/connect")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["url"].startswith("https://slack.com/oauth/v2/authorize?")
+	assert "client_id=client-id" in body["url"]
+	assert "state=" in body["url"]
+
+	app.dependency_overrides.clear()

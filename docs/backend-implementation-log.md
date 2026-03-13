@@ -364,6 +364,80 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Use shortcuts for quick platform testing without changing variables.
 
+## Step 21 - Notion Worker Deep Ingestion Enrichment
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Enhanced Notion ingestion from search-only results to enriched records.
+    - Added bounded enrichment controls for page content and database expansion.
+    - Added plain-text extraction from Notion block children.
+    - Added database row expansion by querying discovered database objects.
+  - backend/tests/test_normalizers.py:
+    - Added unit tests for Notion block plain-text extraction.
+    - Added unit test coverage for database-row fallback behavior on fetch failure.
+- Verification:
+  - Code changes applied successfully.
+  - Local test execution in current shell is blocked by missing runtime dependencies (`psycopg`, `celery`) during collection.
+  - Command attempted: `pytest -q` (with `PYTHONPATH=.`).
+- Next:
+  - Install backend dependencies in the active environment, rerun `pytest -q`, and then run a live Notion sync to confirm record quality and item upsert counts.
+
+## Step 22 - Slack Connector Backend Integration
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/config.py: Added Slack OAuth settings for client id, client secret, and redirect URI.
+  - backend/api/routers/connectors.py: Added GET /v1/connectors/slack/connect and GET /v1/connectors/slack/callback with Slack OAuth v2 token exchange and connector upsert flow.
+  - backend/workers/connector_sync.py: Registered Slack in the generic connector sync runner and added bounded Slack conversation/message ingestion with per-user profile enrichment and incremental cursor tracking.
+  - backend/normalizer/slack.py: Added Slack message normalizer producing message items with channel and sender metadata.
+  - backend/workers/slack_worker.py, backend/workers/celery_app.py, backend/docker-compose.yml: Added dedicated Slack Celery task, queue routing, include registration, and worker service.
+  - backend/.env.example: Added Slack environment variable placeholders.
+  - backend/tests/test_normalizers.py, backend/tests/test_celery_foundation.py, backend/tests/test_api.py: Added Slack-focused test coverage for normalizer behavior, sync fetch cursoring, queue registration, and OAuth connect URL generation.
+- Verification:
+  - Targeted tests passed: 58 passed in 1.87s.
+  - Command used: `Set-Location backend; py -3 -m pytest tests/test_normalizers.py tests/test_celery_foundation.py tests/test_api.py -q`
+- Next:
+  - Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_REDIRECT_URI` in backend/.env.
+  - Register `http://127.0.0.1:8000/v1/connectors/slack/callback` in the Slack app OAuth redirect URLs.
+  - Start `worker-slack` alongside the API and trigger `POST /v1/connectors/slack/sync` after completing the OAuth callback.
+
+## Step 23 - Postman Gap Fill + Notion/Slack Worker Verification
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added missing Chat endpoints:
+      - `POST /v1/chat/message`
+      - `GET /v1/chat/{session_id}/history`
+    - Added missing Slack OAuth endpoints:
+      - `GET /v1/connectors/slack/connect`
+      - `GET /v1/connectors/slack/callback`
+    - Added supporting collection variables for chat and Slack OAuth flow (`chatSessionId`, `chatMessage`, `slackAuthUrl`, `slackAuthCode`, `slackAuthState`).
+  - Verified Notion and Slack workers remain correctly wired through Celery and connector sync runner:
+    - `workers.notion_worker.sync_notion`
+    - `workers.slack_worker.sync_slack`
+- Verification:
+  - Collection JSON parses successfully.
+  - Route coverage check confirms no missing non-doc HTTP endpoints in Postman collection.
+  - Focused tests passed:
+    - `pytest tests/test_normalizers.py tests/test_api.py -q` with `PYTHONPATH=.` -> 20 passed
+    - `pytest tests/test_celery_foundation.py -q` with `PYTHONPATH=.` -> 38 passed
+- Next:
+  - Optional: add explicit Postman requests for OpenAPI docs routes (`/openapi.json`, `/docs`) if API exploration in Postman is needed.
+
+## Step 24 - Slack OAuth Redirect Scheme Fix (HTTPS to HTTP)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/.env:
+    - Updated `SLACK_REDIRECT_URI` from `https://127.0.0.1:8000/v1/connectors/slack/callback` to `http://127.0.0.1:8000/v1/connectors/slack/callback` to match local Uvicorn (non-TLS) runtime.
+- Verification:
+  - Configuration now aligns with local server transport (HTTP), preventing TLS handshake bytes from being sent to an HTTP socket.
+- Next:
+  - Ensure Slack app OAuth Redirect URLs include the exact same callback URI: `http://127.0.0.1:8000/v1/connectors/slack/callback`.
+  - Restart API process and retry Slack connect flow.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
@@ -378,6 +452,7 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - drive -> workers.google_worker.sync_drive
   - whatsapp -> workers.whatsapp_worker.sync_whatsapp
   - notion -> workers.notion_worker.sync_notion
+  - slack -> workers.slack_worker.sync_slack
   - spotify -> workers.spotify_worker.sync_spotify
 
 ### 2. Chat Endpoint Contract (for Person 2 chat implementation)

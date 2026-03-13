@@ -40,6 +40,14 @@ class Settings(BaseSettings):
 	spotify_client_secret: str = Field(default="")
 	spotify_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/spotify/callback")
 
+	slack_client_id: str = Field(default="")
+	slack_client_secret: str = Field(default="")
+	slack_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/slack/callback")
+
+	notion_client_id: str = Field(default="")
+	notion_client_secret: str = Field(default="")
+	notion_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/notion/callback")
+
 	model_config = SettingsConfigDict(
 		env_file=".env",
 		env_file_encoding="utf-8",
