@@ -684,3 +684,28 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - With `Base Directory=/` and compose path `backend/docker-compose.coolify.yml`, Docker now resolves to `backend/Dockerfile`.
 - Next:
   - Redeploy from Coolify and validate `api` service startup, DB connectivity, and `/health` endpoint.
+
+## Step 29 - Coolify Deployment Build/Start Success
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Redeployed Personal API on Coolify after build-context path fix.
+  - Build stage completed for API and worker services without Dockerfile path errors.
+  - Coolify successfully removed old containers and started new application containers.
+- Verification:
+  - Deployment log confirms successful flow: import -> build -> start -> new container started.
+  - No `Dockerfile not found` or build failure present in latest deployment output.
+- Next:
+  - Run production runtime smoke tests: API health endpoint, auth login/register, and one connector sync queue trigger.
+
+## Step 30 - Coolify API Container Healthcheck
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.coolify.yml: Added an `api` container healthcheck targeting `http://127.0.0.1:8000/health`.
+  - Used Python stdlib inside the existing image so no extra packages or Dockerfile changes are required.
+- Verification:
+  - Healthcheck command aligns with the existing FastAPI health route in backend/api/main.py.
+  - Probe is container-local and independent of external proxy/TLS state.
+- Next:
+  - Reload compose file in Coolify, redeploy, and confirm the `api` service becomes healthy.
