@@ -833,3 +833,71 @@ Track backend implementation progress step-by-step, with what changed, status, a
     - Command: python -m json.tool docs/postman/PersonalAPI.postman_collection.json
 - Next:
   - Redeploy backend with current RAG debug changes and run the two new Postman requests against the hosted environment.
+
+## Step 37 - Production-Grade Google Drive and GCal Sync Cursors
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added robust cursor helpers for connector state (`_has_cursor_value`, `_parse_state_cursor`, `_encode_state_cursor`, `_max_datetime_value`).
+    - Fixed Google cursor handling so sentinel cursor values (`"0"`/empty) are never sent as upstream page tokens.
+    - Upgraded Gmail fetch pagination behavior to return empty cursor when no `nextPageToken` exists.
+    - Reworked Drive sync to production-style incremental behavior:
+      - Uses state cursor JSON (`page_token`, `updated_after`).
+      - Uses ascending `modifiedTime` with `trashed=false` filters.
+      - Enables shared drive coverage (`supportsAllDrives`, `includeItemsFromAllDrives`).
+      - Persists high-watermark (`updated_after`) when page traversal finishes.
+    - Reworked GCal sync to production-style incremental behavior:
+      - Uses state cursor JSON (`page_token`, `sync_token`, `updated_after`).
+      - Uses `nextSyncToken` for delta sync and preserves continuation with `pageToken`.
+      - Handles stale Google sync tokens (`HTTP 410`) by automatically falling back to `updatedMin` incremental fetch.
+  - backend/tests/test_normalizers.py:
+    - Added regression test to ensure Gmail does not send invalid `pageToken=0`.
+    - Added regression test for Drive incremental state cursor generation.
+    - Added regression test for GCal stale sync-token recovery path.
+- Verification:
+  - Targeted connector and normalizer suites passed: `25 passed in 1.70s`.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py -q`
+- Next:
+  - Run live connector smoke tests for Google Drive and GCal against real OAuth tokens and verify repeated sync runs produce no duplicate pulls beyond idempotent upsert updates.
+
+## Step 38 - Remove WhatsApp Connector API and Worker Support
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Removed `whatsapp` from `PLATFORM_TO_TASK`, disabling WhatsApp connector bootstrap/sync routing.
+  - backend/workers/connector_sync.py:
+    - Removed WhatsApp normalizer import/registration and WhatsApp fetch branch.
+    - Removed `_fetch_whatsapp_records` implementation.
+  - backend/workers/celery_app.py:
+    - Removed `QUEUE_WHATSAPP`, WhatsApp task route, and `workers.whatsapp_worker` include.
+  - backend/workers/whatsapp_worker.py:
+    - Deleted WhatsApp worker module.
+  - backend/normalizer/whatsapp.py:
+    - Deleted WhatsApp normalizer module.
+  - backend/docker-compose.yml and backend/docker-compose.coolify.yml:
+    - Removed `worker-whatsapp` service definitions.
+  - backend/tests/test_normalizers.py:
+    - Removed WhatsApp normalizer test/import.
+  - backend/tests/test_celery_foundation.py:
+    - Removed WhatsApp queue/route/include assertions and constants.
+  - docs/FRONTEND_API_REFERENCE.md:
+    - Removed WhatsApp connector setup section to align docs with backend capability.
+- Verification:
+  - Targeted backend regression suites passed: `62 passed in 1.53s`.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py tests/test_celery_foundation.py -q`
+- Next:
+  - Optionally remove WhatsApp requests from `docs/postman/PersonalAPI.postman_collection.json` to keep Postman artifacts in sync with removed APIs.
+
+## Step 39 - Coolify Deployment Start-Order Hardening
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.coolify.yml:
+    - Added `depends_on: api: condition: service_healthy` to all worker services (`worker-google`, `worker-notion`, `worker-spotify`, `worker-slack`, `worker-file-watcher`, `worker-embedding`).
+    - This serializes worker startup behind healthy API readiness and reduces container start race pressure during Coolify `docker compose up -d`.
+- Verification:
+  - Compose file schema remains valid for existing `depends_on` healthcheck conditions already used in this file.
+- Next:
+  - Redeploy on Coolify and, if needed, run one-time orphan cleanup before retry.

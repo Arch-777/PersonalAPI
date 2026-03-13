@@ -54,26 +54,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
-
-  worker-whatsapp:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      REDIS_URL: redis://redis:6379/0
-    command:
-      [
-        "celery",
-        "-A",
-        "workers.celery_app:celery_app",
-        "worker",
-        "--loglevel=INFO",
-        "--queues=connector.whatsapp",
-        "--hostname=worker-whatsapp@%h",
-      ]
-    depends_on:
-      redis:
+      api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -96,6 +77,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-spotify:
@@ -116,6 +99,8 @@ services:
       ]
     depends_on:
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -138,6 +123,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-file-watcher:
@@ -159,6 +146,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-embedding:
@@ -179,6 +168,8 @@ services:
       ]
     depends_on:
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
     restart: unless-stopped
 
