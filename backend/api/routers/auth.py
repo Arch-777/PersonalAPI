@@ -16,7 +16,6 @@ from api.schemas.auth import GoogleLoginRequest, LoginRequest, RegisterRequest, 
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-DEFAULT_GOOGLE_AUTH_REDIRECT_URI = "http://127.0.0.1:8000/auth/google/callback"
 
 
 def _google_config_error_detail(settings) -> str:
@@ -33,7 +32,7 @@ def _google_config_error_detail(settings) -> str:
 def _resolve_google_auth_redirect_uri(request: Request) -> str:
 	settings = get_settings()
 	configured = settings.google_auth_redirect_uri.strip()
-	if configured and configured != DEFAULT_GOOGLE_AUTH_REDIRECT_URI:
+	if configured:
 		return configured
 	return str(request.url_for("google_auth_callback"))
 

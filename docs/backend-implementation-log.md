@@ -438,6 +438,17 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Ensure Slack app OAuth Redirect URLs include the exact same callback URI: `http://127.0.0.1:8000/v1/connectors/slack/callback`.
   - Restart API process and retry Slack connect flow.
 
+## Step 25 - Connector Sync Queue Status Accuracy Fix
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py: Removed the premature `syncing` status update from the sync trigger route so connectors only transition to `syncing` when a worker actually begins execution.
+  - backend/tests/test_api.py: Updated connector sync trigger coverage to verify queued jobs preserve the connector's existing status while clearing stale errors.
+- Verification:
+  - Targeted connector sync API tests passed.
+- Next:
+  - Add separate queued-state observability if the product needs distinct user-facing queue and run states.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
@@ -938,3 +949,18 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Manual review of service definitions confirms only WhatsApp worker removal is applied.
 - Next:
   - Proceed with deployment using current compose files.
+
+## Step 43 - Google Auth Connect Redirect URI Consistency Fix
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/auth.py:
+    - Updated Google app-login redirect resolution to always prefer explicit `GOOGLE_AUTH_REDIRECT_URI` when configured.
+    - Removed host-dependent behavior that could alternate between `localhost` and `127.0.0.1`, causing Google `redirect_uri_mismatch` in environments with only one URI registered.
+- Verification:
+  - Direct route validation returned success and correct redirect target:
+    - `GET /auth/google/connect` -> `200`
+    - Generated Google URL contains `redirect_uri=http://127.0.0.1:8000/auth/google/callback`.
+- Next:
+  - Ensure the exact callback URI used in `.env` is present in Google Cloud OAuth Authorized redirect URIs.
+  - Retry login flow from frontend and confirm callback completes without `redirect_uri_mismatch`.

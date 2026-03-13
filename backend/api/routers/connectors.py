@@ -639,7 +639,7 @@ def sync_connector(
     if connector is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
-    connector.status = "syncing"
+    # Clear stale errors, but only workers should mark a connector as actively syncing.
     connector.error_message = None
     db.commit()
 

@@ -249,7 +249,8 @@ def test_connector_sync_queues_expected_worker_task(platform: str, task_name: st
 			assert response.status_code == 202
 			assert response.json() == {"status": "sync_queued", "platform": platform}
 			assert fake_db.committed is True
-			assert connector.status == "syncing"
+			assert connector.status == "connected"
+			assert connector.error_message is None
 
 			send_task.assert_called_once()
 			called_task_name = send_task.call_args.args[0]
