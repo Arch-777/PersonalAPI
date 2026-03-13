@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 	enable_inline_sync_fallback: bool = Field(default=False)
 
 	cors_origins: str = Field(default="http://localhost:3000")
+	frontend_app_url: str = Field(default="http://127.0.0.1:3000")
 	user_data_root: str = Field(default="storage")
 
 	database_url: str = Field(default="postgresql+psycopg://postgres:localpass@localhost:5432/personalapi")

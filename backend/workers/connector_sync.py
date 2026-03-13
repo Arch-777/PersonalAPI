@@ -36,6 +36,7 @@ from normalizer.gmail import GmailNormalizer
 from normalizer.notion import NotionNormalizer
 from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
+from workers.exceptions import NonRetryableSyncError
 
 
 NOTION_VERSION = "2022-06-28"
@@ -44,6 +45,11 @@ _FILENAME_SAFE_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
 NOTION_MAX_PAGE_ENRICH = 20
 NOTION_MAX_DATABASES = 5
 NOTION_MAX_DATABASE_ROWS = 20
+GOOGLE_REQUIRED_SCOPES: dict[str, set[str]] = {
+    "gmail": {"https://www.googleapis.com/auth/gmail.readonly"},
+    "drive": {"https://www.googleapis.com/auth/drive.readonly"},
+    "gcal": {"https://www.googleapis.com/auth/calendar.readonly"},
+}
 
 NORMALIZERS: dict[str, BaseNormalizer] = {
     "gmail": GmailNormalizer(),
@@ -76,6 +82,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
     try:
         with SessionLocal() as db:
             connector = _get_connector(db, parsed_connector_id, parsed_user_id, platform)
+            _ensure_google_scopes(connector, platform)
             if platform in {"gmail", "drive", "gcal"}:
                 _maybe_refresh_google_token(db, connector)
             if platform == "spotify":
@@ -136,6 +143,27 @@ def _get_connector(db, connector_id: uuid.UUID, user_id: uuid.UUID, platform: st
     if connector is None:
         raise ValueError(f"Connector not found for platform '{platform}'")
     return connector
+
+
+def _ensure_google_scopes(connector: Connector, platform: str) -> None:
+    required_scopes = GOOGLE_REQUIRED_SCOPES.get(platform)
+    if required_scopes is None:
+        return
+
+    metadata = connector.metadata_json if isinstance(connector.metadata_json, dict) else {}
+    raw_scope_value = metadata.get("google_scopes")
+    if not isinstance(raw_scope_value, str) or not raw_scope_value.strip():
+        raise NonRetryableSyncError(
+            f"Google {platform} scope not found on connector. Reconnect via /v1/connectors/google/connect?platform={platform}"
+        )
+
+    granted_scopes = {scope.strip() for scope in raw_scope_value.split() if scope.strip()}
+    missing = required_scopes - granted_scopes
+    if missing:
+        missing_scopes = ", ".join(sorted(missing))
+        raise NonRetryableSyncError(
+            f"Google token lacks required {platform} scope(s): {missing_scopes}. Reconnect via /v1/connectors/google/connect?platform={platform}"
+        )
 
 
 def _maybe_refresh_spotify_token(db: Any, connector: Connector) -> None:
@@ -843,7 +871,15 @@ def _http_get_json(
 
     with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
         response = client.get(url, params=params, headers=merged_headers)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if "googleapis.com" in url and response.status_code in {401, 403}:
+                detail = _extract_http_error_message(response)
+                raise NonRetryableSyncError(
+                    f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
+                ) from exc
+            raise
         data = response.json()
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected response payload type from {url}")
@@ -866,7 +902,15 @@ def _http_post_json(
 
     with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
         response = client.post(url, json=json_body, headers=merged_headers)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if "googleapis.com" in url and response.status_code in {401, 403}:
+                detail = _extract_http_error_message(response)
+                raise NonRetryableSyncError(
+                    f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
+                ) from exc
+            raise
         data = response.json()
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected response payload type from {url}")
@@ -887,6 +931,25 @@ def _extract_next_cursor(payload: dict[str, Any], current_cursor: str | None) ->
                 return str(value)
 
     return str(current_cursor or "0")
+
+
+def _extract_http_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        text = response.text.strip()
+        return text[:300] if text else "unknown error"
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        message = payload.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    return "unknown error"
 
 
 def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:

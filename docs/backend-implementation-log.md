@@ -482,6 +482,57 @@ Track backend implementation progress step-by-step, with what changed, status, a
     - `POST /v1/connectors/drive/sync`
     - `POST /v1/connectors/gcal/sync`
 
+## Step 28 - Google 403 Scope/Auth Fail-Fast + Retry Suppression
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/exceptions.py:
+    - Added `NonRetryableSyncError` for connector sync failures that should not be retried.
+  - backend/workers/celery_app.py:
+    - Updated base Celery task to set `dont_autoretry_for = (NonRetryableSyncError,)` while keeping retry behavior for transient errors.
+  - backend/workers/connector_sync.py:
+    - Added Google platform required-scope validation before API fetch (`gmail`, `drive`, `gcal`).
+    - Added fail-fast conversion of Google HTTP 401/403 responses into `NonRetryableSyncError` with extracted provider error message.
+    - Added human-actionable reconnect guidance in error text (`/v1/connectors/google/connect?platform=...`).
+- Verification:
+  - No editor errors in modified worker modules.
+  - Worker package compile check passed (`py -3 -m compileall workers`).
+- Next:
+  - Redeploy workers and API so new exception flow is active.
+  - Reconnect Google Drive/GCal with the matching platform OAuth flow and retry sync.
+
+## Step 29 - OAuth Callback UX Redirect to Frontend + Toast Feedback
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/core/config.py:
+    - Added `frontend_app_url` setting to control callback redirect target for web UI.
+  - backend/api/routers/connectors.py:
+    - Updated connector OAuth callbacks (`google`, `notion`, `spotify`, `slack`) to return HTTP redirects to frontend integrations route instead of JSON pages.
+    - Added query payload on redirect (`integration`, `status`, `message`) for client-side toast rendering.
+  - frontend/app/providers.tsx:
+    - Mounted global Sonner toaster so callback messages can be displayed anywhere in app.
+  - frontend/app/dashboard/integrations/page.tsx:
+    - Added URL query handling to show success/error toast after callback redirect and then clean URL via `router.replace`.
+- Verification:
+  - No editor errors on modified backend/frontend files.
+  - Backend compile check passed for modified modules.
+  - Frontend lint run reported pre-existing errors in unrelated files (`frontend/app/(public)/layout.tsx`, `frontend/components/mode-toggle.tsx`).
+- Next:
+  - Set `FRONTEND_APP_URL` in backend env for deployed environment.
+  - Redeploy API and verify OAuth callback now lands on `/dashboard/integrations` with toast feedback.
+
+## Step 30 - Env Example Update for Frontend Callback URL
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/.env.example:
+    - Added `FRONTEND_APP_URL=http://127.0.0.1:3000` to match backend `frontend_app_url` setting used by connector OAuth callback redirects.
+- Verification:
+  - Manual config parity check confirms `.env.example` now includes the required environment variable.
+- Next:
+  - Ensure deployed backend environment sets `FRONTEND_APP_URL` to the real frontend domain.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract

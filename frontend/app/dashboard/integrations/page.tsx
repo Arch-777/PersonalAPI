@@ -1,10 +1,11 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
 const integrations = [
   { name: "Notion", connected: true },
@@ -15,23 +16,58 @@ const integrations = [
 ];
 
 export default function IntegrationsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    const integration = searchParams.get("integration");
+    const status = searchParams.get("status");
+    const message = searchParams.get("message");
+
+    if (!integration || !status) {
+      return;
+    }
+
+    const normalized = integration.trim();
+    const fallbackMessage =
+      status === "success"
+        ? `${normalized} connected successfully`
+        : `${normalized} connection failed`;
+    const toastMessage = (message || fallbackMessage).trim();
+
+    if (status === "success") {
+      toast.success(toastMessage);
+    } else {
+      toast.error(toastMessage);
+    }
+
+    router.replace("/dashboard/integrations", { scroll: false });
+  }, [router, searchParams]);
+
   return (
     <div className="space-y-8 max-w-5xl">
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold font-serif text-zinc-900 tracking-tight">Integrations</h1>
+        <h1 className="text-3xl font-bold font-serif text-zinc-900 tracking-tight">
+          Integrations
+        </h1>
         <p className="text-zinc-500 font-serif">Manage your data sources.</p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
         {integrations.map((c) => (
-          <Card key={c.name} className="flex flex-col overflow-hidden border-zinc-200 shadow-sm rounded-xl hover:shadow-md transition-shadow bg-white">
+          <Card
+            key={c.name}
+            className="flex flex-col overflow-hidden border-zinc-200 shadow-sm rounded-xl hover:shadow-md transition-shadow bg-white"
+          >
             <CardHeader className="flex flex-col items-start gap-3 p-5 pb-5">
-              <CardTitle className="text-2xl font-serif text-zinc-900 font-normal">{c.name}</CardTitle>
-              <Badge 
+              <CardTitle className="text-2xl font-serif text-zinc-900 font-normal">
+                {c.name}
+              </CardTitle>
+              <Badge
                 variant="outline"
                 className={`rounded-full px-3 py-0.5 text-xs font-semibold shrink-0 border-0 ${
-                  c.connected 
-                    ? "bg-zinc-900 text-zinc-50" 
+                  c.connected
+                    ? "bg-zinc-900 text-zinc-50"
                     : "bg-zinc-100 text-zinc-500"
                 }`}
               >
@@ -43,8 +79,8 @@ export default function IntegrationsPage() {
               <Button
                 variant={c.connected ? "outline" : "default"}
                 className={`w-full h-10 rounded-lg font-medium transition-all duration-200 ${
-                  c.connected 
-                    ? "bg-white border-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-900" 
+                  c.connected
+                    ? "bg-white border-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-900"
                     : "bg-[#18181b] text-zinc-50 hover:bg-[#27272a] shadow-sm"
                 }`}
               >

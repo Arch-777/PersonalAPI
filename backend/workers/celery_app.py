@@ -18,6 +18,7 @@ import api.models.connector  # noqa: F401
 import api.models.item  # noqa: F401
 import api.models.item_chunk  # noqa: F401
 import api.models.user  # noqa: F401
+from workers.exceptions import NonRetryableSyncError
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class ResilientTask(Task):
     """Base task with retry defaults and dead-letter fallback for failed jobs."""
 
     autoretry_for = (Exception,)
+    dont_autoretry_for = (NonRetryableSyncError,)
     retry_backoff = True
     retry_backoff_max = 60
     retry_jitter = True

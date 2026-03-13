@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -52,6 +53,18 @@ GOOGLE_PLATFORM_SCOPES: dict[str, list[str]] = {
 }
 
 GOOGLE_CONNECTOR_PLATFORMS = ("gmail", "drive", "gcal")
+
+
+def _build_frontend_integrations_callback_url(platform: str, ok: bool, message: str | None = None) -> str:
+    settings = get_settings()
+    base = settings.frontend_app_url.rstrip("/")
+    query = {
+        "integration": platform,
+        "status": "success" if ok else "error",
+    }
+    if message:
+        query["message"] = message
+    return f"{base}/dashboard/integrations?{urllib.parse.urlencode(query)}"
 
 
 def _ensure_google_connector_row(
@@ -168,7 +181,7 @@ def google_callback(
     code: str,
     state: str,
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     settings = get_settings()
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google connector is not configured")
@@ -250,7 +263,12 @@ def google_callback(
         )
     db.commit()
 
-    return {"status": "connected", "platform": normalized_platform}
+    redirect_url = _build_frontend_integrations_callback_url(
+        platform=normalized_platform,
+        ok=True,
+        message=f"Connected {normalized_platform}",
+    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +300,7 @@ def notion_callback(
     code: str,
     state: str,
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     """Exchange Notion OAuth code for a workspace access token and save the connector row."""
     settings = get_settings()
     if not settings.notion_client_id:
@@ -339,7 +357,12 @@ def notion_callback(
         platform_email=platform_email,
         metadata={"workspace_name": workspace_name, "workspace_id": workspace_id, "bot_id": bot_id},
     )
-    return {"status": "connected", "platform": "notion", "workspace": workspace_name}
+    redirect_url = _build_frontend_integrations_callback_url(
+        platform="notion",
+        ok=True,
+        message=f"Connected notion workspace {workspace_name}" if workspace_name else "Connected notion",
+    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 class NotionTokenRequest(object):
@@ -469,7 +492,7 @@ def spotify_callback(
     code: str,
     state: str,
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     """Exchange Spotify auth code for tokens and save/update the connector row."""
     settings = get_settings()
     if not settings.spotify_client_id:
@@ -557,7 +580,12 @@ def spotify_callback(
         db.add(connector)
         db.commit()
 
-    return {"status": "connected", "platform": "spotify"}
+    redirect_url = _build_frontend_integrations_callback_url(
+        platform="spotify",
+        ok=True,
+        message="Connected spotify",
+    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get("/slack/connect")
@@ -585,7 +613,7 @@ def slack_callback(
     code: str,
     state: str,
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     """Exchange Slack auth code for tokens and save/update the connector row."""
     settings = get_settings()
     if not settings.slack_client_id or not settings.slack_client_secret:
@@ -681,7 +709,12 @@ def slack_callback(
         db.add(connector)
         db.commit()
 
-    return {"status": "connected", "platform": "slack"}
+    redirect_url = _build_frontend_integrations_callback_url(
+        platform="slack",
+        ok=True,
+        message="Connected slack",
+    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get("/", response_model=list[ConnectorResponse])
