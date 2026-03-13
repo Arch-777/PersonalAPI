@@ -901,3 +901,40 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Compose file schema remains valid for existing `depends_on` healthcheck conditions already used in this file.
 - Next:
   - Redeploy on Coolify and, if needed, run one-time orphan cleanup before retry.
+
+## Step 40 - Coolify Compose Dependency Simplification (Exit 255 Mitigation)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.coolify.yml:
+    - Replaced all health-condition based `depends_on` blocks with simple service startup dependencies (`depends_on: [redis]`) for `api` and all worker services.
+    - Rationale: reduce orchestration fragility in Coolify helper `docker compose up -d` flow where condition-wait state can fail with exit code 255 before full startup.
+- Verification:
+  - Compose syntax validated by editor diagnostics (no YAML/schema errors).
+- Next:
+  - Redeploy in Coolify.
+  - If failure persists, execute one-time orphan/network prune on host before redeploy.
+
+## Step 41 - Restore Original Coolify Compose Dependency Style
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.coolify.yml:
+    - Reverted `depends_on` blocks back to original `condition: service_healthy` format for `redis` on `api` and all worker services.
+    - Kept WhatsApp removal intact (no `worker-whatsapp` service).
+- Verification:
+  - YAML/schema diagnostics clean in editor.
+- Next:
+  - Redeploy with this compose variant where only WhatsApp worker is removed from service set.
+
+## Step 42 - Local Compose Parity Verification
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.yml:
+    - Verified compose remains in original dependency format (`condition: service_healthy`) and includes no `worker-whatsapp` service.
+    - No file edits required.
+- Verification:
+  - Manual review of service definitions confirms only WhatsApp worker removal is applied.
+- Next:
+  - Proceed with deployment using current compose files.
