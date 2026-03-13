@@ -54,6 +54,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-notion:
@@ -74,6 +76,8 @@ services:
       ]
     depends_on:
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -96,6 +100,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-slack:
@@ -116,6 +122,8 @@ services:
       ]
     depends_on:
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -138,6 +146,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   worker-embedding:
@@ -158,6 +168,8 @@ services:
       ]
     depends_on:
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
     restart: unless-stopped
 

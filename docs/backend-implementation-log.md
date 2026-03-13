@@ -889,3 +889,15 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py tests/test_celery_foundation.py -q`
 - Next:
   - Optionally remove WhatsApp requests from `docs/postman/PersonalAPI.postman_collection.json` to keep Postman artifacts in sync with removed APIs.
+
+## Step 39 - Coolify Deployment Start-Order Hardening
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/docker-compose.coolify.yml:
+    - Added `depends_on: api: condition: service_healthy` to all worker services (`worker-google`, `worker-notion`, `worker-spotify`, `worker-slack`, `worker-file-watcher`, `worker-embedding`).
+    - This serializes worker startup behind healthy API readiness and reduces container start race pressure during Coolify `docker compose up -d`.
+- Verification:
+  - Compose file schema remains valid for existing `depends_on` healthcheck conditions already used in this file.
+- Next:
+  - Redeploy on Coolify and, if needed, run one-time orphan cleanup before retry.
