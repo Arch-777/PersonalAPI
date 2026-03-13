@@ -16,6 +16,7 @@
 6. [Connectors](#6-connectors)
 7. [Developer API Keys](#7-developer-api-keys)
 8. [WebSocket](#8-websocket)
+9. [MCP Server](#9-mcp-server)
 
 ---
 
@@ -735,6 +736,268 @@ Send a plain text `"ping"` message to keep the connection alive. The server resp
 3. Listen for `sync.started` → show spinner/progress indicator.
 4. Listen for `sync.completed` → dismiss spinner, refresh email/document lists.
 5. Listen for `sync.failed` → show error toast.
+
+---
+
+## 9. MCP Server
+
+> The MCP (Model Context Protocol) server is mounted at `/mcp` and exposes tool-based data access for AI agents (Claude Desktop, custom MCP clients, automation scripts, etc.).  
+> **Auth:** All MCP endpoints require `X-API-Key: <developer_key>` — generate one via `POST /v1/developer/api-keys`.  
+> **Base URL:** `http://127.0.0.1:8000/mcp` (same host as the main API).
+
+---
+
+### GET `/mcp/health`
+Liveness check for the MCP sub-application.
+
+**Headers** — none required
+
+**Response `200`**
+```json
+{ "status": "ok", "service": "mcp" }
+```
+
+---
+
+### GET `/mcp/tools/list`
+Discover all available MCP tools. Useful for MCP client auto-discovery.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+```
+
+**Response `200`**
+```json
+{
+  "tools": [
+    {
+      "name": "search",
+      "method": "POST",
+      "path": "/tools/search",
+      "description": "Full-text search across all synced personal data.",
+      "input_schema": {
+        "query": "string (required)",
+        "top_k": "integer (default 10, max 50)",
+        "type_filter": "string|null — email|document|track|message|event",
+        "source_filter": "string|null — gmail|drive|notion|slack|spotify|gcal"
+      }
+    },
+    { "name": "ask", "method": "POST", "path": "/tools/ask", "description": "..." },
+    { "name": "get_item", "method": "GET", "path": "/tools/item/{item_id}", "description": "..." },
+    { "name": "list_connectors", "method": "GET", "path": "/tools/connectors", "description": "..." },
+    { "name": "get_profile", "method": "GET", "path": "/tools/profile", "description": "..." }
+  ]
+}
+```
+
+---
+
+### POST `/mcp/tools/search`
+Full-text search across all of the user's synced personal data.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+Content-Type: application/json
+```
+
+**Body**
+```json
+{
+  "query": "project kickoff meeting notes",
+  "top_k": 10,
+  "type_filter": "document",
+  "source_filter": "notion"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | ✅ | Natural language search query (1–2000 chars) |
+| `top_k` | int | ❌ | Number of results (default `10`, max `50`) |
+| `type_filter` | string | ❌ | `email` \| `document` \| `track` \| `message` \| `event` |
+| `source_filter` | string | ❌ | `gmail` \| `drive` \| `notion` \| `slack` \| `spotify` \| `gcal` |
+
+**Response `200`**
+```json
+{
+  "query": "project kickoff meeting notes",
+  "results": [
+    {
+      "id": "uuid",
+      "type": "document",
+      "source": "notion",
+      "title": "Project Kickoff — Q2",
+      "preview": "First 300 chars of summary or content...",
+      "score": 1.0,
+      "item_date": "2026-03-01T00:00:00Z",
+      "metadata": { "workspace_name": "My Workspace" }
+    }
+  ],
+  "count": 3
+}
+```
+
+**Use case:** Agent-driven data lookup. Pass user query directly; filter by `type_filter` to narrow scope.
+
+---
+
+### POST `/mcp/tools/ask`
+Ask a natural language question and receive a grounded answer with source citations from the RAG engine.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+Content-Type: application/json
+```
+
+**Body**
+```json
+{
+  "question": "What did I discuss with my team last week about the product roadmap?",
+  "session_id": null,
+  "top_k": 8
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `question` | string | ✅ | Natural language question (1–4000 chars) |
+| `session_id` | string | ❌ | Optional session UUID for conversation continuity |
+| `top_k` | int | ❌ | Number of context documents to retrieve (default `8`, max `30`) |
+
+**Response `200`**
+```json
+{
+  "answer": "Based on your Slack messages and Notion notes, you discussed...",
+  "sources": [
+    { "id": "uuid", "type": "message", "source": "slack", "score": 0.92, "preview": "..." }
+  ],
+  "documents": ["Product Roadmap Q2", "Team Standup Notes"],
+  "file_links": ["/users/uuid/data/slack/message_...json"]
+}
+```
+
+**Use case:** Conversational AI agent that reasons over the user's personal data. If `RAG_LLM_ENABLED=true`, uses local Ollama/qwen2.5 for generation; otherwise uses deterministic context assembly.
+
+---
+
+### GET `/mcp/tools/item/{item_id}`
+Retrieve the full content and metadata of a single personal data item by UUID.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+```
+
+**Path params**
+| Param | Type | Description |
+|-------|------|-------------|
+| `item_id` | UUID | Item identifier from a search result |
+
+**Response `200`**
+```json
+{
+  "id": "uuid",
+  "type": "email",
+  "source": "gmail",
+  "source_id": "gmail_message_id",
+  "title": "Re: Q2 Planning",
+  "sender_name": "Jane Doe",
+  "sender_email": "jane@example.com",
+  "content": "Full email body text...",
+  "summary": "Short summary...",
+  "metadata": { "labels": ["INBOX"], "connector_id": "uuid" },
+  "item_date": "2026-03-10T09:00:00Z",
+  "file_path": "/users/uuid/data/gmail/email_...json"
+}
+```
+
+**Error cases**
+- `400` — Invalid UUID format
+- `404` — Item not found or not owned by key owner
+
+---
+
+### GET `/mcp/tools/connectors`
+List all connected platforms and their sync status for the key owner.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+```
+
+**Response `200`**
+```json
+[
+  {
+    "platform": "gmail",
+    "status": "connected",
+    "platform_email": "user@gmail.com",
+    "last_synced": "2026-03-14T08:00:00Z",
+    "error_message": null
+  },
+  {
+    "platform": "notion",
+    "status": "connected",
+    "platform_email": null,
+    "last_synced": "2026-03-14T07:30:00Z",
+    "error_message": null
+  }
+]
+```
+
+**Use case:** Agent checks which data sources are available before deciding where to search.
+
+---
+
+### GET `/mcp/tools/profile`
+Return the user's profile and a summary of their synced data counts.
+
+**Headers**
+```
+X-API-Key: pk_live_xxxxxxxxxx
+```
+
+**Response `200`**
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "full_name": "Jane Doe",
+  "connector_count": 4,
+  "item_count": 1842
+}
+```
+
+**Use case:** Agent introduction — understand who the user is and how much data has been synced before querying.
+
+---
+
+### WhatsApp Connector Setup
+
+WhatsApp does not use OAuth. Instead, connect it by bootstrapping the connector with your custom WhatsApp API endpoint and access token.
+
+```
+POST /v1/connectors/whatsapp/bootstrap
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+**Body**
+```json
+{
+  "access_token": "your-whatsapp-api-token",
+  "metadata_json": {
+    "messages_endpoint": "https://your-whatsapp-server.example.com/api/messages"
+  }
+}
+```
+
+**Response `201`** — ConnectorResponse (same shape as `GET /v1/connectors/{platform}`)
+
+After bootstrapping, trigger sync with `POST /v1/connectors/whatsapp/sync`.
 
 ---
 
