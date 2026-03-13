@@ -12,4 +12,5 @@ redis
 celery
 pgvector
 httpx
+pytest
 

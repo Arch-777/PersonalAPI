@@ -79,8 +79,103 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Implement Step 5 core routers: emails, documents, search, and developer API key endpoints.
 
+## Step 5 - Core Routers and Developer API Keys (Person 1 / Week 3)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/routers/emails.py: Added authenticated email listing with pagination and deterministic ordering.
+  - backend/api/routers/documents.py: Added authenticated document listing with pagination and deterministic ordering.
+  - backend/api/routers/search.py: Added authenticated semantic-style text search endpoint with type filter and ranking.
+  - backend/api/routers/developer.py: Added developer API key lifecycle endpoints (create/list/revoke).
+  - Implemented API key hashing using SHA-256 and one-time raw key return on create.
+- Verification:
+  - Python compile check passed for full api package.
+  - No lint/compile errors reported for Step 5 router files.
+- Next:
+  - Add Step 6 tests for api and search endpoints.
+  - Finalize API contract notes for Person 2 (connector sync trigger, chat payloads, websocket event envelope).
+
+## Step 6 - Tests and Integration Contract Notes (Person 1 / Week 4)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/tests/test_api.py: Added endpoint tests for health, emails, documents, and developer API key lifecycle.
+  - backend/tests/test_search.py: Added search endpoint tests for ranked results and top_k behavior.
+  - backend/requirements.txt: Added pytest dependency for local test execution.
+  - backend/api/models/item.py: Renamed mapped attribute to metadata_json (column name remains metadata) to avoid SQLAlchemy reserved attribute conflict.
+  - backend/api/models/connector.py: Renamed mapped attribute to metadata_json (column name remains metadata).
+  - backend/api/schemas/item.py, backend/api/schemas/connector.py: Added validation aliases for metadata_json and adjusted UUID id typing.
+  - backend/api/schemas/auth.py: Adjusted UUID id typing for ORM compatibility.
+  - backend/api/routers/search.py: Updated metadata selection to align with metadata_json mapped attribute.
+- Verification:
+  - Test execution passed: 7 passed in 1.01s.
+  - Command used: py -3 -m pytest tests/test_api.py tests/test_search.py -q
+- Next:
+  - Handoff to Person 2 for workers, normalizers, RAG, websocket, and MCP implementation.
+
+## Integration Contract Notes for Person 2
+
+### 1. Connector Sync Trigger Contract
+- Endpoint: POST /v1/connectors/{platform}/sync
+- Auth: Bearer JWT required (current user scope).
+- Request body: none.
+- Response (success):
+  - status: sync_queued
+  - platform: {platform}
+- Queue task naming expected from workers:
+  - gmail -> workers.google_worker.sync_gmail
+  - drive -> workers.google_worker.sync_drive
+  - whatsapp -> workers.whatsapp_worker.sync_whatsapp
+  - notion -> workers.notion_worker.sync_notion
+  - spotify -> workers.spotify_worker.sync_spotify
+
+### 2. Chat Endpoint Contract (for Person 2 chat implementation)
+- Endpoint target: POST /v1/chat/message
+- Auth: Bearer JWT required.
+- Request payload:
+  - message: string (1..8000)
+  - session_id: string | null
+- Response payload shape:
+  - session_id: string
+  - answer: string
+  - sources: array of { id, type, source, score, preview }
+  - documents: array of string
+  - file_links: array of string
+
+### 3. WebSocket Event Envelope Contract
+- Endpoint target: /ws or /v1/ws (final path to be confirmed by Person 2 ws router).
+- Auth: user-scoped session/token validation.
+- Event envelope (recommended stable shape):
+  - event: string
+  - timestamp: ISO-8601 string
+  - user_id: UUID string
+  - data: object
+- Minimum events required for frontend hooks:
+  - sync.started: { platform, connector_id, task_id }
+  - sync.progress: { platform, connector_id, processed, total }
+  - sync.completed: { platform, connector_id, items_upserted, embedded }
+  - sync.failed: { platform, connector_id, error }
+
+### 4. Search/Item Data Contract Used by Person 1 Routers
+- Item mapped attribute names in ORM:
+  - metadata_json (DB column: metadata)
+- Search router expects row fields:
+  - id, type, source, summary, content, metadata, item_date, score
+- Schemas currently used by Person 1 routers:
+  - ItemResponse, PaginatedItemsResponse, SearchResponse, SearchResult
+
+### 5. Developer API Key Contract for Agent Integrations
+- Endpoints:
+  - POST /v1/developer/api-keys
+  - GET /v1/developer/api-keys
+  - POST /v1/developer/api-keys/{api_key_id}/revoke
+- Storage behavior:
+  - key_hash is SHA-256 hash of raw key.
+  - raw key returned once on create response only.
+  - allowed_channels and agent_type fields available for channel/agent restrictions.
+
 ---
 
 ## Current Status
-- Person 1 progress through Step 4 is completed.
-- Ready to execute Step 5: core read/query routers and developer key APIs.
+- Person 1 progress through Step 6 is completed.
+- Person 1 scope for planned Steps 1-6 is complete and ready for Person 2 integration.

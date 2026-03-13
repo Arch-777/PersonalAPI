@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -7,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ItemResponse(BaseModel):
 	model_config = ConfigDict(from_attributes=True)
 
-	id: str
+	id: uuid.UUID
 	type: str
 	source: str
 	source_id: str
@@ -16,7 +17,7 @@ class ItemResponse(BaseModel):
 	sender_email: str | None = None
 	content: str | None = None
 	summary: str | None = None
-	metadata: dict[str, Any] = Field(default_factory=dict)
+	metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_json")
 	item_date: datetime | None = None
 	file_path: str | None = None
 	created_at: datetime

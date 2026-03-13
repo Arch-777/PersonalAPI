@@ -26,7 +26,7 @@ class Item(Base):
 	sender_email: Mapped[str | None] = mapped_column(Text, nullable=True)
 	content: Mapped[str | None] = mapped_column(Text, nullable=True)
 	summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-	metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+	metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict, server_default="{}")
 	item_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 	file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 	embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)

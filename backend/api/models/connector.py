@@ -23,7 +23,7 @@ class Connector(Base):
 	sync_cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
 	last_synced: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-	metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+	metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict, server_default="{}")
 	created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime(timezone=True),
