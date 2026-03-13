@@ -113,6 +113,70 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Handoff to Person 2 for workers, normalizers, RAG, websocket, and MCP implementation.
 
+## Step 7 - Postman Collection (API Validation Artifact)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json: Added production-grade Postman collection for implemented endpoints.
+  - Included endpoint coverage:
+    - GET /health
+    - POST /auth/register
+    - POST /auth/login
+    - GET /auth/me
+    - GET /v1/emails/
+    - GET /v1/documents/
+    - GET /v1/search/
+    - POST /v1/developer/api-keys
+    - GET /v1/developer/api-keys
+    - POST /v1/developer/api-keys/{api_key_id}/revoke
+  - Added collection variables, auth automation, and test scripts:
+    - accessToken capture from login
+    - apiKeyId and developerApiKey capture from create API key
+    - request-level assertions for response contract checks
+- Verification:
+  - JSON validation passed via python json.tool.
+- Next:
+  - Optional: add environment files for local/staging/prod and Newman CI execution.
+
+## Step 8 - Runtime Environment Setup (.env)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/.env: Added runtime environment file with Azure PostgreSQL credentials and required app settings.
+  - DATABASE_URL configured for endpoint personalapi.postgres.database.azure.com with URL-encoded password.
+  - DATABASE_SSL_MODE set to require for Azure PostgreSQL.
+  - .gitignore: Added .env ignore entries to protect credentials from accidental commits.
+- Verification:
+  - File created successfully and aligned with api/core/config.py required settings.
+- Next:
+  - Run a DB connectivity check and verify authenticated endpoints against Azure DB.
+
+## Step 9 - Azure DB Schema Bootstrap and Startup Gate Validation
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Confirmed startup DB gate behavior in api/main.py + api/core/db.py blocks app boot on DB failures.
+  - Diagnosed runtime error as missing schema (`relation users does not exist`) after successful DB connectivity.
+  - Applied migration script `backend/migrations/001_initial.sql` to Azure PostgreSQL via Python SQL execution.
+- Verification:
+  - Verified table existence: `users_exists= True`.
+  - Startup guard behavior confirmed: backend does not start when DB is unreachable/invalid.
+- Next:
+  - Restart backend and run auth/register smoke test.
+
+## Step 10 - Auth Hashing Runtime Fix (bcrypt Compatibility)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/security.py: Switched password hashing scheme from `bcrypt` to `pbkdf2_sha256` to avoid passlib+bcrypt backend compatibility failure in current runtime.
+  - backend/requirements.txt: Changed dependency from `passlib[bcrypt]` to `passlib`.
+- Verification:
+  - Local validation passed:
+    - hash prefix generated: `pbkdf2-sha256`
+    - password verify check: `True`
+- Next:
+  - Restart backend and retry POST /auth/register and POST /auth/login smoke tests.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
@@ -177,5 +241,5 @@ Track backend implementation progress step-by-step, with what changed, status, a
 ---
 
 ## Current Status
-- Person 1 progress through Step 6 is completed.
-- Person 1 scope for planned Steps 1-6 is complete and ready for Person 2 integration.
+- Person 1 progress through Step 10 is completed.
+- Backend auth hashing is runtime-stable and ready for register/login verification.

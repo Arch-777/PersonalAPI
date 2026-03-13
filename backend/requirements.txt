@@ -6,7 +6,7 @@ pydantic
 pydantic-settings
 python-dotenv
 python-jose[cryptography]
-passlib[bcrypt]
+passlib
 email-validator
 redis
 celery

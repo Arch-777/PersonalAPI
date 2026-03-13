@@ -1,17 +1,26 @@
 from importlib import import_module
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.core.db import check_database_connection
 from api.core.config import get_settings
 
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+	check_database_connection()
+	yield
+
 app = FastAPI(
 	title=settings.app_name,
 	version=settings.app_version,
 	description="Your personal data, unified.",
+	lifespan=lifespan,
 )
 
 app.add_middleware(
