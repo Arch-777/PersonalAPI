@@ -1,22 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { GoogleLogin } from "@react-oauth/google";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Alert } from "@/components/ui/alert";
-import { useGoogleAuth } from "@/hooks/use-auth";
+import { useLogin, useSignup } from "@/hooks/use-auth";
+import { apiClient } from '@/lib/api-client';
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 function GoogleIcon() {
   return (
@@ -88,7 +88,9 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [password, setPassword] = useState("");
-  const googleAuth = useGoogleAuth(() => router.push("/dashboard"));
+
+  const loginMutation = useLogin();
+  const signupMutation = useSignup();
 
   const handleOpenChange = (v: boolean) => {
     if (!v) {
@@ -99,10 +101,38 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
     onOpenChange(v);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleGoogleLogin = async () => {
+    try {
+      const { data } = await apiClient.get('/auth/google/connect');
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error?.response?.data?.detail || "Could not connect to Google");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Mock: just navigate to dashboard
-    router.push("/dashboard");
+    setError("");
+    
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const email = formData.get("email") as string;
+    const name = formData.get("name") as string;
+    // We already have password in state, but can get from formData too
+    const pwd = formData.get("password") as string;
+
+    try {
+      if (isLogin) {
+        await loginMutation.mutateAsync({ email, password: pwd });
+      } else {
+        await signupMutation.mutateAsync({ email, password: pwd, full_name: name });
+      }
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error?.response?.data?.detail || "An error occurred");
+    }
   };
 
   const isLogin = type === "login";
@@ -122,21 +152,16 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
         </DialogHeader>
 
         {/* Google button */}
-        <div className="flex justify-center">
-          <GoogleLogin
-            onSuccess={(credentialResponse) => {
-              if (credentialResponse.credential) {
-                googleAuth.mutate(credentialResponse.credential);
-              }
-            }}
-            onError={() => setError("Google sign-in failed. Please try again.")}
-            useOneTap={false}
-            text={isLogin ? "signin_with" : "signup_with"}
-            shape="rectangular"
-            theme="filled_black"
-            width="368"
-          />
-        </div>
+        <Button
+          variant="outline"
+          className="w-full border-white/20 hover:bg-white/5 cursor-pointer"
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={loginMutation.isPending || signupMutation.isPending}
+        >
+          <GoogleIcon />
+          Continue with Google
+        </Button>
 
         {/* Divider */}
         <div className="relative flex items-center my-1">
