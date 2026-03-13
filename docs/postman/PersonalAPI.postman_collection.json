@@ -22,19 +22,22 @@
         "type": "text/javascript",
         "exec": [
           "if (!pm.collectionVariables.get('baseUrl')) {",
-          "  pm.collectionVariables.set('baseUrl', 'http://localhost:8000');",
+          "  pm.collectionVariables.set('baseUrl', 'http://127.0.0.1:8000');",
           "}",
           "if (!pm.collectionVariables.get('apiPrefix')) {",
-          "  pm.collectionVariables.set('apiPrefix', '/v1');",
+          "  pm.collectionVariables.set('apiPrefix', 'v1');",
           "}",
+          "var _prefix = pm.collectionVariables.get('apiPrefix') || 'v1';",
+          "_prefix = _prefix.replace(/^\\/+|\\/+$/g, '');",
+          "pm.collectionVariables.set('apiPrefix', _prefix);",
           "pm.request.headers.upsert({ key: 'Accept', value: 'application/json' });"
         ]
       }
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:8000", "type": "string" },
-    { "key": "apiPrefix", "value": "/v1", "type": "string" },
+    { "key": "baseUrl", "value": "http://127.0.0.1:8000", "type": "string" },
+    { "key": "apiPrefix", "value": "v1", "type": "string" },
     { "key": "email", "value": "qa.user@example.com", "type": "string" },
     { "key": "password", "value": "ChangeMe123!", "type": "string" },
     { "key": "fullName", "value": "QA User", "type": "string" },
@@ -44,7 +47,16 @@
     { "key": "searchQuery", "value": "meeting notes", "type": "string" },
     { "key": "typeFilter", "value": "document", "type": "string" },
     { "key": "limit", "value": "20", "type": "string" },
-    { "key": "offset", "value": "0", "type": "string" }
+    { "key": "offset", "value": "0", "type": "string" },
+    { "key": "spotifyAuthUrl", "value": "", "type": "string" },
+    { "key": "spotifyAuthCode", "value": "", "type": "string" },
+    { "key": "spotifyState", "value": "", "type": "string" },
+    { "key": "googleIdToken", "value": "", "type": "string" },
+    { "key": "googleAuthUrl", "value": "", "type": "string" },
+    { "key": "googleAuthCode", "value": "", "type": "string" },
+    { "key": "googleAuthState", "value": "", "type": "string" },
+    { "key": "googleConnectorPlatform", "value": "gmail", "type": "string" },
+    { "key": "connectorPlatform", "value": "gmail", "type": "string" }
   ],
   "item": [
     {
@@ -151,6 +163,120 @@
           ]
         },
         {
+          "name": "Google Login (ID Token)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{googleIdToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/google",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google"]
+            },
+            "description": "Login/signup using Google ID token. Set googleIdToken from frontend Google auth flow or Google OAuth Playground."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('googleIdToken')) {",
+                  "  throw new Error('googleIdToken is empty. Provide a Google ID token first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Access token returned', function () {",
+                  "  pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('accessToken', body.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google OAuth Connect (App Login)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/google/connect",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google", "connect"]
+            },
+            "description": "Returns Google OAuth URL for app login/signup callback flow."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.collectionVariables.set('googleAuthUrl', body.url);",
+                  "try { var parsed = new URL(body.url); var state = parsed.searchParams.get('state'); if (state) pm.collectionVariables.set('googleAuthState', state); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google OAuth Callback (App Login)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/google/callback?code={{googleAuthCode}}&state={{googleAuthState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google", "callback"],
+              "query": [
+                { "key": "code", "value": "{{googleAuthCode}}" },
+                { "key": "state", "value": "{{googleAuthState}}" }
+              ]
+            },
+            "description": "Exchanges Google code+state and returns PersonalAPI access token."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('googleAuthCode')) { throw new Error('googleAuthCode is empty. Complete Google consent first.'); }",
+                  "if (!pm.collectionVariables.get('googleAuthState')) { throw new Error('googleAuthState is empty. Run Google OAuth Connect first.'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Get Current User",
           "request": {
             "method": "GET",
@@ -190,7 +316,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/emails/?limit={{limit}}&offset={{offset}}",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/emails/?limit={{limit}}&offset={{offset}}",
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "emails", ""],
               "query": [
@@ -225,7 +351,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/documents/?limit={{limit}}&offset={{offset}}",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/documents/?limit={{limit}}&offset={{offset}}",
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "documents", ""],
               "query": [
@@ -257,7 +383,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/search/?q={{searchQuery}}&top_k=10&type_filter={{typeFilter}}",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/search/?q={{searchQuery}}&top_k=10&type_filter={{typeFilter}}",
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "search", ""],
               "query": [
@@ -301,7 +427,7 @@
               "raw": "{\n  \"name\": \"postman-key\",\n  \"allowed_channels\": [\"telegram\"],\n  \"agent_type\": \"openclaw\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/developer/api-keys",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/developer/api-keys",
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "developer", "api-keys"]
             },
@@ -333,7 +459,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/developer/api-keys",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/developer/api-keys",
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "developer", "api-keys"]
             },
@@ -359,7 +485,7 @@
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}{{apiPrefix}}/developer/api-keys/{{apiKeyId}}/revoke",
+              "raw": "{{baseUrl}}/{{apiPrefix}}/developer/api-keys/{{apiKeyId}}/revoke",
               "host": ["{{baseUrl}}"],
               "path": [
                 "{{apiPrefix}}",
@@ -398,6 +524,298 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Connectors",
+      "item": [
+        {
+          "name": "List Connectors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", ""]
+            },
+            "description": "Lists all connectors for the authenticated user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Response is array', function () { pm.expect(body).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google Connector - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform={{googleConnectorPlatform}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                { "key": "platform", "value": "{{googleConnectorPlatform}}" }
+              ]
+            },
+            "description": "Returns Google OAuth connect URL for gmail/drive/gcal connector onboarding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.collectionVariables.set('googleAuthUrl', body.url);",
+                  "try { var parsed = new URL(body.url); var state = parsed.searchParams.get('state'); if (state) pm.collectionVariables.set('googleAuthState', state); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google Connector - Callback (Manual Code Exchange)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/callback?code={{googleAuthCode}}&state={{googleAuthState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "callback"],
+              "query": [
+                { "key": "code", "value": "{{googleAuthCode}}" },
+                { "key": "state", "value": "{{googleAuthState}}" }
+              ]
+            },
+            "description": "Exchanges Google auth code/state and creates connector for selected platform encoded in state."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('googleAuthCode')) { throw new Error('googleAuthCode is empty. Complete Google consent first.'); }",
+                  "if (!pm.collectionVariables.get('googleAuthState')) { throw new Error('googleAuthState is empty. Run Google Connector - Get Connect URL first.'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connector connected', function () { pm.expect(body.status).to.eql('connected'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Spotify - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/spotify/connect",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "spotify", "connect"]
+            },
+            "description": "Returns Spotify authorization URL for the current authenticated user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connect URL exists', function () {",
+                  "  pm.expect(body).to.have.property('url');",
+                  "  pm.expect(body.url).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('spotifyAuthUrl', body.url);",
+                  "try {",
+                  "  var parsed = new URL(body.url);",
+                  "  var state = parsed.searchParams.get('state');",
+                  "  if (state) { pm.collectionVariables.set('spotifyState', state); }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Spotify - Callback (Manual Code Exchange)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/spotify/callback?code={{spotifyAuthCode}}&state={{spotifyState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "spotify", "callback"],
+              "query": [
+                { "key": "code", "value": "{{spotifyAuthCode}}" },
+                { "key": "state", "value": "{{spotifyState}}" }
+              ]
+            },
+            "description": "Exchanges Spotify authorization code and state for stored connector tokens. Set spotifyAuthCode manually from browser callback URL."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('spotifyAuthCode')) {",
+                  "  throw new Error('spotifyAuthCode is empty. Complete Spotify consent in browser and set it first.');",
+                  "}",
+                  "if (!pm.collectionVariables.get('spotifyState')) {",
+                  "  throw new Error('spotifyState is empty. Run Spotify - Get Connect URL first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connector connected', function () {",
+                  "  pm.expect(body.status).to.eql('connected');",
+                  "  pm.expect(body.platform).to.eql('spotify');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Spotify - Get Connector",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/spotify",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "spotify"]
+            },
+            "description": "Returns the saved Spotify connector state for the current user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Spotify connector payload exists', function () {",
+                  "  pm.expect(body.platform).to.eql('spotify');",
+                  "  pm.expect(body).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Spotify - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/spotify/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "spotify", "sync"]
+            },
+            "description": "Queues a Spotify sync job (recently played + liked songs)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', function () { pm.response.to.have.status(202); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Sync queue response is valid', function () {",
+                  "  pm.expect(body.status).to.eql('sync_queued');",
+                  "  pm.expect(body.platform).to.eql('spotify');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Connector - Get By Platform",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "{{connectorPlatform}}"]
+            },
+            "description": "Gets connector details for any platform (gmail|drive|gcal|spotify|notion|whatsapp)."
+          }
+        },
+        {
+          "name": "Connector - Bootstrap",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}/bootstrap",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "{{apiPrefix}}",
+                "connectors",
+                "{{connectorPlatform}}",
+                "bootstrap"
+              ]
+            },
+            "description": "Creates a dev bootstrap connector record for platform if missing."
+          }
+        },
+        {
+          "name": "Connector - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}/sync",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "{{apiPrefix}}",
+                "connectors",
+                "{{connectorPlatform}}",
+                "sync"
+              ]
+            },
+            "description": "Queues sync for selected connector platform."
+          }
         }
       ]
     }
