@@ -1324,3 +1324,16 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Command (from workspace root): `python -m json.tool docs/postman/PersonalAPI.postman_collection.json`
 - Next:
   - Use `Get Recent History` for sidebar/recent-chat manual testing, and enable the `query` param when validating in-session search behavior.
+
+## Step 49 - README Production Documentation Upgrade
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - README.md: Rewrote the root project documentation to production-grade quality.
+  - Added accurate sections for architecture, runtime components, supported integrations, API surface, environment variables, local development, Docker deployment, testing, operational notes, production checklist, troubleshooting, and contributor links.
+  - Replaced the minimal collaborator list with named contributors and direct GitHub profile URLs.
+  - Kept the document free of license content as requested.
+- Verification:
+  - README content aligned against current backend routes, worker queues, docker-compose services, env template, and repository git authorship.
+- Next:
+  - Keep the README updated when APIs, worker queues, deployment topology, or contributor roster change.

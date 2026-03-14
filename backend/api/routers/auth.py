@@ -1,9 +1,11 @@
+import logging
 import secrets
 import urllib.parse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.core.auth import get_current_user
@@ -15,6 +17,8 @@ from api.core.security import create_access_token, hash_password, verify_passwor
 from api.models.user import User
 from api.schemas.auth import GoogleLoginRequest, LoginRequest, RegisterRequest, TokenResponse, UserResponse
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -108,20 +112,28 @@ def google_auth_callback(code: str, state: str, db: Session = Depends(get_db)) -
 	email = google_identity["email"].strip().lower()
 	full_name = google_identity.get("name")
 
-	user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-	if user is None:
-		user = User(
-			email=email,
-			full_name=full_name,
-			hashed_password=hash_password(secrets.token_urlsafe(32)),
-		)
-		db.add(user)
-		db.commit()
-		db.refresh(user)
-	elif not user.full_name and full_name:
-		user.full_name = full_name
-		db.commit()
-		db.refresh(user)
+	try:
+		user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+		if user is None:
+			user = User(
+				email=email,
+				full_name=full_name,
+				hashed_password=hash_password(secrets.token_urlsafe(32)),
+			)
+			db.add(user)
+			db.commit()
+			db.refresh(user)
+		elif not user.full_name and full_name:
+			user.full_name = full_name
+			db.commit()
+			db.refresh(user)
+	except IntegrityError as exc:
+		db.rollback()
+		raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Account conflict. Please try again.") from exc
+	except SQLAlchemyError as exc:
+		db.rollback()
+		logger.exception("DB error during Google OAuth callback")
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error") from exc
 
 	access_token = create_access_token(str(user.id))
 	return TokenResponse(access_token=access_token)
@@ -135,7 +147,12 @@ def verify_google_oauth_state(state: str) -> dict:
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
-	existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+	try:
+		existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+	except SQLAlchemyError as exc:
+		logger.exception("DB error checking existing user during register")
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error") from exc
+
 	if existing:
 		raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
@@ -144,15 +161,29 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
 		full_name=payload.full_name,
 		hashed_password=hash_password(payload.password),
 	)
-	db.add(user)
-	db.commit()
-	db.refresh(user)
+	try:
+		db.add(user)
+		db.commit()
+		db.refresh(user)
+	except IntegrityError as exc:
+		db.rollback()
+		raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered") from exc
+	except SQLAlchemyError as exc:
+		db.rollback()
+		logger.exception("DB error during user registration")
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error") from exc
+
 	return UserResponse.model_validate(user)
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-	user = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+	try:
+		user = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+	except SQLAlchemyError as exc:
+		logger.exception("DB error during login")
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error") from exc
+
 	if user is None or not verify_password(payload.password, user.hashed_password):
 		raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
@@ -172,21 +203,29 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> 
 	email = google_identity["email"].strip().lower()
 	full_name = google_identity.get("name")
 
-	user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-	if user is None:
-		# OAuth-only accounts do not start with a local password, but schema requires a hashed value.
-		user = User(
-			email=email,
-			full_name=full_name,
-			hashed_password=hash_password(secrets.token_urlsafe(32)),
-		)
-		db.add(user)
-		db.commit()
-		db.refresh(user)
-	elif not user.full_name and full_name:
-		user.full_name = full_name
-		db.commit()
-		db.refresh(user)
+	try:
+		user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+		if user is None:
+			# OAuth-only accounts do not start with a local password, but schema requires a hashed value.
+			user = User(
+				email=email,
+				full_name=full_name,
+				hashed_password=hash_password(secrets.token_urlsafe(32)),
+			)
+			db.add(user)
+			db.commit()
+			db.refresh(user)
+		elif not user.full_name and full_name:
+			user.full_name = full_name
+			db.commit()
+			db.refresh(user)
+	except IntegrityError as exc:
+		db.rollback()
+		raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Account conflict. Please try again.") from exc
+	except SQLAlchemyError as exc:
+		db.rollback()
+		logger.exception("DB error during Google login")
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error") from exc
 
 	access_token = create_access_token(str(user.id))
 	return TokenResponse(access_token=access_token)

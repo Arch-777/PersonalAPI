@@ -3,14 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 
 export const useUser = () => {
-  return useQuery({
-    queryKey: ['me'],
-    queryFn: async () => {
-       const { data } = await apiClient.get('/auth/me');
-       return data;
-    },
-    retry: false,
-  });
+    return useQuery({
+        queryKey: ['me'],
+        queryFn: async () => {
+            const { data } = await apiClient.get('/auth/me');
+            return data;
+        },
+        retry: false,
+    });
 };
 
 export const useLogin = () => {
@@ -40,13 +40,19 @@ export const useSignup = () => {
         mutationFn: async (userData: { email: string; password: string; full_name: string }) => {
             // First register the user (returns 201 without access token)
             await apiClient.post('/auth/register', userData);
-            
-            // Automatically log them in to get the access token
-            const { data } = await apiClient.post('/auth/login', {
-                email: userData.email,
-                password: userData.password,
-            });
-            return data;
+
+            // Automatically log them in to get the access token.
+            // If this second call fails, signal the modal with a sentinel error
+            // so it can redirect to login rather than showing a confusing message.
+            try {
+                const { data } = await apiClient.post('/auth/login', {
+                    email: userData.email,
+                    password: userData.password,
+                });
+                return data;
+            } catch {
+                throw new Error('SIGNUP_LOGIN_FAILED');
+            }
         },
         onSuccess: (data) => {
             if (typeof window !== 'undefined') {

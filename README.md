@@ -1,320 +1,391 @@
 # PersonalAPI
 
-PersonalAPI is a full-stack personal knowledge platform that connects external services (Google, GitHub, Notion, Spotify, Slack), normalizes incoming data, indexes it for retrieval, and serves grounded responses through REST APIs, chat, WebSocket notifications, and MCP tools.
+PersonalAPI is a full-stack personal knowledge platform that connects personal SaaS accounts, normalizes the data into a unified schema, indexes it for retrieval, and exposes that data through REST APIs, chat workflows, WebSocket notifications, and an MCP-compatible tool server.
 
-## Collaborators
+The system is built for one core use case: take fragmented personal data from multiple services, keep it user-scoped, make it searchable, and return grounded results that can be consumed by both humans and AI clients.
 
-- anshjadhav
-- nishantpatil
-- partik
+## Table of Contents
 
-## What This Project Solves
+- [Overview](#overview)
+- [Core Capabilities](#core-capabilities)
+- [Architecture](#architecture)
+- [Repository Layout](#repository-layout)
+- [Technology Stack](#technology-stack)
+- [Runtime Components](#runtime-components)
+- [Supported Integrations](#supported-integrations)
+- [API Surface](#api-surface)
+- [Data Model](#data-model)
+- [Environment Configuration](#environment-configuration)
+- [Local Development](#local-development)
+- [Docker Deployment](#docker-deployment)
+- [Testing and Verification](#testing-and-verification)
+- [Operational Notes](#operational-notes)
+- [Production Readiness Checklist](#production-readiness-checklist)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Contributors](#contributors)
 
-Personal data lives in many apps. PersonalAPI unifies those apps into one searchable and chat-ready knowledge layer.
+## Overview
 
-Core capabilities:
-- Multi-source connector ingestion (OAuth + token-based)
-- Unified item model across services
-- Queue-based sync and indexing pipelines
-- Search and chat APIs with source citations
-- Developer API key system
-- MCP tool server for external AI clients
+PersonalAPI brings together data from services such as Google, GitHub, Notion, Spotify, and Slack into a single backend contract. The backend stores normalized records, tracks connector state, builds retrieval-ready chunks, and exposes the result through a dashboard-oriented API and AI-friendly MCP interface.
 
-## Tech Stack
+The repository includes:
 
-- Backend: FastAPI, SQLAlchemy, PostgreSQL (pgvector + pg_trgm), Redis, Celery
-- Frontend: Next.js, React, TanStack Query, Axios
-- Retrieval: chunking + embedding + hybrid retrieval + answer generation
-- Messaging: WebSocket user-scoped sync notifications
+- A FastAPI backend for auth, connectors, search, chat, WebSocket updates, and developer APIs.
+- Celery workers for sync, normalization, file watching, embedding, and scheduled dispatch.
+- A Next.js frontend dashboard.
+- An MCP FastAPI sub-application mounted under the backend.
+- SQL migrations, tests, and implementation documentation.
 
-## Architecture Snapshot
+## Core Capabilities
+
+- Multi-source ingestion with OAuth and token-based connector flows.
+- User-scoped normalization into shared relational tables.
+- Search and retrieval backed by PostgreSQL, pg_trgm, and pgvector.
+- Chat sessions with stored conversation history and grounded sources.
+- Developer API key lifecycle management.
+- Real-time sync notifications over WebSocket.
+- MCP tools for external AI agents.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-	U[User / Dashboard] --> A[FastAPI API]
-	X[MCP Client] --> M[MCP Server]
-	M --> A
+    FE[Next.js Dashboard] --> API[FastAPI API]
+    MCPClient[External MCP Client] --> MCP[MCP Sub-Application]
+    MCP --> API
 
-	A --> DB[(PostgreSQL)]
-	A --> R[(Redis)]
-	A --> C[Celery Workers]
+    API --> PG[(PostgreSQL + pgvector + pg_trgm)]
+    API --> REDIS[(Redis)]
+    API --> WS[WebSocket Channel]
+    API --> CELERY[Celery Routing]
 
-	C --> G[Google APIs]
-	C --> GH[GitHub API]
-	C --> N[Notion API]
-	C --> S[Spotify API]
-	C --> SL[Slack API]
+    CELERY --> WG[Google Worker]
+    CELERY --> WGH[GitHub Worker]
+    CELERY --> WN[Notion Worker]
+    CELERY --> WSPO[Spotify Worker]
+    CELERY --> WSL[Slack Worker]
+    CELERY --> WFW[File Watcher Worker]
+    CELERY --> WEMB[Embedding Worker]
+    CELERY --> WBEAT[Beat Scheduler]
 
-	C --> F[File Storage users/*]
-	C --> DB
-	C --> E[Embedding Pipeline]
-	E --> DB
+    WG --> GAPI[Google APIs]
+    WGH --> GHAPI[GitHub API]
+    WN --> NAPI[Notion API]
+    WSPO --> SAPI[Spotify API]
+    WSL --> SLAPI[Slack API]
 
-	C --> W[WebSocket Broadcast]
-	W --> U
+    WG --> FS[User Storage Filesystem]
+    WGH --> FS
+    WN --> FS
+    WSPO --> FS
+    WSL --> FS
+    WFW --> PG
+    WEMB --> PG
 ```
 
-## Project Structure
+### Request and indexing flow
+
+1. A user authenticates and connects an external service.
+2. The backend stores connector metadata and provider tokens.
+3. A sync task is routed into a platform-specific Celery queue.
+4. A worker fetches source records, normalizes them, writes user files, and upserts items.
+5. File watcher and embedding workers update retrieval-ready chunk data.
+6. Search, chat, dashboard, and MCP clients consume indexed data.
+
+## Repository Layout
 
 ```text
 backend/
-	api/
-		main.py
-		core/
-		models/
-		routers/
-		schemas/
-	workers/
-		celery_app.py
-		connector_sync.py
-		*_worker.py
-	normalizer/
-	rag/
-	mcp/
-		server.py
-	migrations/
-	tests/
+  api/
+    core/         # settings, DB wiring, auth, security, OAuth helpers
+    models/       # SQLAlchemy ORM models
+    routers/      # auth, connectors, search, chat, developer, websocket
+    schemas/      # Pydantic request/response contracts
+    main.py       # FastAPI entrypoint and router mounting
+  mcp/            # MCP-compatible FastAPI sub-application
+  migrations/     # SQL bootstrap scripts
+  normalizer/     # source-specific normalization logic
+  rag/            # chunking, retrieval, context, generation, indexing
+  scripts/        # operational utilities
+  storage/        # user-scoped file storage
+  tests/          # unit, integration, and live backend tests
+  workers/        # Celery app, queue tasks, auto-sync, embeddings
 frontend/
-	app/
-	components/
-	hooks/
-	lib/
-docs/
+  app/            # Next.js app router pages
+  components/     # UI components
+  hooks/          # frontend state hooks and API integration hooks
+  lib/            # API client and shared utilities
+docs/             # system architecture, implementation notes, deployment docs
 ```
 
-## Detailed Working
+## Technology Stack
 
-### 1) Authentication and Identity
+### Backend
 
-Auth router paths:
-- /auth/register
-- /auth/login
-- /auth/google/connect
-- /auth/google/callback
-- /auth/google
-- /auth/me
+- Python
+- FastAPI
+- SQLAlchemy
+- Pydantic and pydantic-settings
+- psycopg
+- Redis
+- Celery
+- pgvector
+- httpx
 
-How it works:
-1. User signs in with local credentials or Google OAuth.
-2. Backend issues JWT access token.
-3. Protected routes resolve user from token and enforce user-scoped data access.
+### Frontend
 
-### 2) Connector Lifecycle
+- Next.js 16
+- React 19
+- TanStack Query
+- Axios
+- TypeScript
+- Tailwind CSS 4
 
-Base path: /v1/connectors
+### Data and retrieval
 
-Connector operations:
-- List connectors
-- Get connector details by platform
-- Start sync
-- OAuth connect/callback per platform
-- Bootstrap connector entries for controlled flows
-- GitHub webhook ingestion endpoint
+- PostgreSQL 16
+- pgvector for embeddings
+- pg_trgm for text similarity support
+- Retrieval pipeline under `backend/rag`
 
-Lifecycle:
-1. Generate provider auth URL with signed state.
-2. Receive callback code + state.
-3. Exchange code for token.
-4. Upsert connector metadata and token data.
-5. Enqueue sync task.
+## Runtime Components
 
-### 3) Sync and Worker Pipeline
+### Backend HTTP application
 
-Queues:
-- connector.google
-- connector.github
-- connector.notion
-- connector.spotify
-- connector.slack
-- pipeline.file-watcher
-- pipeline.embedding
+The main application entrypoint is `backend/api/main.py` and exposes:
 
-Worker logic:
-1. Validate connector ownership + platform.
-2. Refresh expired OAuth tokens if needed.
-3. Fetch records from provider APIs with cursor state.
-4. Normalize records to internal schema.
-5. Persist source files and upsert database items.
-6. Trigger chunk indexing and embeddings.
-7. Save sync_cursor and last_synced timestamps.
-8. Broadcast sync.started / sync.completed / sync.failed events.
+- `GET /health`
+- `GET /health/llm`
+- router groups for auth, emails, documents, search, connectors, developer APIs, chat, and WebSocket
+- the MCP sub-application mounted at `/mcp`
 
-### 4) Storage and Indexing
+Startup performs a database connectivity check and intentionally fails fast if the database is unreachable or the schema is unavailable.
 
-Main entities:
-- users
-- connectors
-- items
-- item_chunks
-- chat_sessions
-- chat_messages
-- api_keys
-- access_logs
+### Celery queues
 
-Storage behavior:
-- PostgreSQL stores normalized content and metadata.
-- item_chunks stores chunk text + embeddings.
-- backend/storage/users holds user file snapshots by source.
-- Redis is used by Celery for broker/result and signaling.
+The worker layer defines these queues:
 
-### 5) Search and Chat
+- `default`
+- `connector.google`
+- `connector.github`
+- `connector.notion`
+- `connector.spotify`
+- `connector.slack`
+- `pipeline.file-watcher`
+- `pipeline.embedding`
 
-Search endpoint: GET /v1/search
+Celery beat dispatches automatic sync work on a configured interval.
 
-Search behavior:
-- User-scoped filtering
-- Full-text and similarity based ranking
-- Optional type filtering and debug scoring
+### MCP server
 
-Chat endpoints:
-- POST /v1/chat/message
-- GET /v1/chat/{session_id}/history
+The MCP server lives in `backend/mcp/server.py` and supports developer-key-authenticated tool access. It can be mounted into the main app or run standalone.
 
-Chat behavior:
-1. Save user message to session history.
-2. Retrieve relevant chunks/items.
-3. Build context and generate answer.
-4. Persist assistant response with sources.
-5. Return answer, sources, documents, links.
+Supported MCP tools:
 
-### 6) Real-Time Notifications
+- `search`
+- `ask`
+- `get_item`
+- `list_connectors`
+- `get_profile`
 
-WebSocket path: /ws?token=<jwt>
+## Supported Integrations
 
-Realtime events:
-- connected
-- sync.started
-- sync.completed
-- sync.failed
+The current backend code supports connector flows for these platforms:
 
-The dashboard can react to sync progress without polling.
+- `gmail`
+- `drive`
+- `gcal`
+- `github`
+- `notion`
+- `spotify`
+- `slack`
 
-### 7) MCP Tool Layer
+Implementation notes:
 
-Mounted path: /mcp
+- Google services share OAuth and connector management patterns.
+- GitHub includes OAuth connection and webhook ownership matching logic.
+- Spotify refresh-token handling is part of the sync pipeline.
+- Notion supports both OAuth and token-based development flows.
 
-Auth model:
-- API key passed in X-API-Key
-- Keys are issued and revoked via /v1/developer/api-keys
-- Backend stores only SHA-256 hashes of keys
+## API Surface
 
-Tool operations:
-- search
-- ask
-- get_item
-- list_connectors
-- get_profile
+### Health
 
-## Data Flow and Flow Charts
+- `GET /health`
+- `GET /health/llm`
+- `GET /mcp/health`
 
-### A) Connector Ingestion Data Flow
+### Authentication
 
-```mermaid
-flowchart TD
-	U[User clicks Connect] --> API1[/GET connect URL/]
-	API1 --> P[OAuth Provider]
-	P --> API2[/GET callback code+state/]
-	API2 --> T[Token Exchange]
-	T --> C[(connectors table)]
-	C --> Q[Queue sync task]
-	Q --> W[Connector Worker]
-	W --> N[Normalize records]
-	N --> I[(items upsert)]
-	N --> FS[(storage/users)]
-	I --> FW[File watcher task]
-	FW --> EW[Embedding worker]
-	EW --> CH[(item_chunks + embeddings)]
-	W --> WS[WebSocket event]
-```
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/google`
+- `GET /auth/google/connect`
+- `GET /auth/google/callback`
+- `GET /auth/me`
 
-### B) Sync Sequence Flow
+### Content APIs
 
-```mermaid
-sequenceDiagram
-	participant UI as Dashboard
-	participant API as FastAPI
-	participant CQ as Celery Queue
-	participant WK as Connector Worker
-	participant EXT as External API
-	participant DB as PostgreSQL
-	participant EMB as Embedding Worker
+- `GET /v1/emails/`
+- `GET /v1/documents/`
+- `GET /v1/search/`
 
-	UI->>API: POST /v1/connectors/{platform}/sync
-	API->>CQ: enqueue task
-	CQ->>WK: deliver task
-	WK->>EXT: fetch records (cursor/token)
-	EXT-->>WK: records
-	WK->>DB: upsert items + update connector cursor
-	WK->>CQ: enqueue embedding/file-watcher
-	CQ->>EMB: embed item chunks
-	EMB->>DB: write vectors/chunks
-	WK-->>UI: websocket sync.completed
-```
+### Connector APIs
 
-### C) Chat and Retrieval Flow
+Base prefix: `/v1/connectors`
 
-```mermaid
-flowchart TD
-	U[User asks question] --> CHAT[/POST /v1/chat/message/]
-	CHAT --> RAG[RAG Engine]
-	RAG --> RET[Retriever]
-	RET --> DB[(items + item_chunks)]
-	DB --> RET
-	RET --> CTX[Context Builder]
-	CTX --> GEN[Generator deterministic or LLM]
-	GEN --> SAVE[(chat_messages)]
-	SAVE --> RESP[Answer + Sources + File Links]
-```
+Representative operations:
 
-### D) Runtime Services Flow
+- list connectors
+- fetch a connector by platform
+- trigger sync
+- bootstrap development connector state
+- update auto-sync behavior
+- disconnect a connector
+- provider-specific connect and callback flows
 
-```mermaid
-flowchart LR
-	FE[Next.js Frontend :3000] --> API[FastAPI :8000]
-	API --> PG[(Postgres :5432)]
-	API --> RD[(Redis :6379)]
-	API --> WS[/WebSocket/]
-	API --> MCP[/MCP mount/]
-	API --> Q[Celery task routes]
-	Q --> WG[worker-google]
-	Q --> WGH[worker-github]
-	Q --> WN[worker-notion]
-	Q --> WSPO[worker-spotify]
-	Q --> WSL[worker-slack]
-	Q --> WFW[worker-file-watcher]
-	Q --> WEMB[worker-embedding]
-```
+### Chat APIs
 
-## Installation and Running Commands
+- `POST /v1/chat/message`
+- `GET /v1/chat/{session_id}/history`
+
+Chat responses return:
+
+- answer text
+- grounded source entries
+- related document identifiers
+- file links
+
+### Developer APIs
+
+- `POST /v1/developer/api-keys`
+- `GET /v1/developer/api-keys`
+- `POST /v1/developer/api-keys/{api_key_id}/revoke`
+
+### WebSocket
+
+- `GET /ws?token=<jwt>`
+
+Expected user-scoped events include connection, sync started, sync completed, and sync failed notifications.
+
+## Data Model
+
+Core persisted entities include:
+
+- `users`
+- `connectors`
+- `items`
+- `item_chunks`
+- `chat_sessions`
+- `chat_messages`
+- `api_keys`
+- `access_logs`
+
+High-level storage behavior:
+
+- PostgreSQL stores normalized items, relational metadata, connector state, chat history, and access-control data.
+- `item_chunks` stores retrieval-ready chunk text plus vector embeddings.
+- `backend/storage/users` stores user-owned source artifacts and snapshots.
+- Redis acts as worker broker and result backend.
+
+## Environment Configuration
+
+The backend expects environment variables or a populated `.env` file. A template is provided in `backend/.env.example`.
+
+### Core settings
+
+- `APP_NAME`
+- `APP_VERSION`
+- `API_PREFIX`
+- `DEBUG`
+- `ENABLE_INLINE_SYNC_FALLBACK`
+- `CORS_ORIGINS`
+- `FRONTEND_APP_URL`
+- `USER_DATA_ROOT`
+
+### Database and cache
+
+- `DATABASE_URL`
+- `DATABASE_SSL_MODE`
+- `DATABASE_CONNECT_TIMEOUT`
+- `REDIS_URL`
+- `AUTO_SYNC_ENABLED`
+
+### Auth and security
+
+- `SECRET_KEY`
+- `ALGORITHM`
+- `ACCESS_TOKEN_EXPIRE_MINUTES`
+
+### Optional local LLM settings
+
+- `RAG_LLM_ENABLED`
+- `RAG_LLM_PROVIDER`
+- `RAG_LLM_BASE_URL`
+- `RAG_LLM_MODEL`
+- `RAG_LLM_TIMEOUT_SECONDS`
+- `RAG_LLM_TEMPERATURE`
+- `RAG_LLM_MAX_TOKENS`
+
+### Connector credentials
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_ALLOWED_CLIENT_IDS`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_AUTH_REDIRECT_URI`
+- `GOOGLE_REDIRECT_URI`
+- `GOOGLE_TOKEN_INFO_URL`
+- `SPOTIFY_CLIENT_ID`
+- `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_REDIRECT_URI`
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_REDIRECT_URI`
+- `NOTION_CLIENT_ID`
+- `NOTION_CLIENT_SECRET`
+- `NOTION_REDIRECT_URI`
+
+Production guidance:
+
+- Replace the example `SECRET_KEY` immediately.
+- Manage secrets outside source control.
+- Use `DATABASE_SSL_MODE=require` for managed PostgreSQL.
+- Restrict `CORS_ORIGINS` to approved frontend origins.
+
+## Local Development
 
 ### Prerequisites
 
-- Python 3.11+ (Docker image uses Python 3.12)
-- Node.js 20+
-- PostgreSQL 16+ with pgvector extension (or use Docker service)
-- Redis 7+
-- Docker Desktop (recommended)
+- Python 3.11 or newer
+- Node.js 20 or newer
+- PostgreSQL 16 with pgvector support, unless using Docker
+- Redis 7 or newer
+- Docker Desktop or Docker Engine for containerized workflows
 
-### 1) Fastest Setup (Docker for backend)
+### Backend setup
 
 ```bash
 cd backend
-docker compose up --build
+python -m venv .venv
 ```
 
-Starts:
-- db
-- redis
-- api
-- worker-google
-- worker-github
-- worker-notion
-- worker-spotify
-- worker-slack
-- worker-file-watcher
-- worker-embedding
+Windows PowerShell:
 
-### 2) Frontend Setup
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run the API locally:
+
+```bash
+cd backend
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Frontend setup
 
 ```bash
 cd frontend
@@ -322,29 +393,16 @@ npm install
 npm run dev
 ```
 
-Frontend default URL: http://localhost:3000
+Default local endpoints:
 
-### 3) Hybrid Setup (infra in Docker, app local)
+- Frontend: `http://localhost:3000`
+- Backend: `http://127.0.0.1:8000`
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- MCP health: `http://127.0.0.1:8000/mcp/health`
 
-Use this if you want local debugging with externalized DB/Redis.
+### Local workers
 
-```bash
-cd backend
-docker compose up -d db redis
-```
-
-Then run backend API locally:
-
-```bash
-cd backend
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Run workers in separate terminals:
+Run each worker in a dedicated terminal when developing without the full Docker stack.
 
 ```bash
 cd backend
@@ -381,9 +439,16 @@ cd backend
 celery -A workers.celery_app:celery_app worker --loglevel=INFO --queues=pipeline.embedding --hostname=worker-embedding@%h
 ```
 
-### 4) Fully Local DB Initialization (if not using Docker DB)
+Run the scheduler:
 
-Create database and run migrations SQL:
+```bash
+cd backend
+celery -A workers.celery_app:celery_app beat --loglevel=INFO
+```
+
+### Database bootstrap
+
+If you are not using the containerized database, create the database and apply the SQL migrations manually.
 
 ```bash
 cd backend
@@ -391,116 +456,166 @@ psql -U postgres -h localhost -d personalapi -f migrations/001_initial.sql
 psql -U postgres -h localhost -d personalapi -f migrations/002_item_chunks.sql
 ```
 
-### 5) MCP Server Standalone (optional)
+## Docker Deployment
+
+The repository includes a backend Docker workflow in `backend/docker-compose.yml`.
+
+### Services started by compose
+
+- `db`
+- `redis`
+- `api`
+- `worker-google`
+- `worker-github`
+- `worker-notion`
+- `worker-spotify`
+- `worker-slack`
+- `worker-file-watcher`
+- `worker-embedding`
+- `worker-beat`
+
+### Start the backend stack
+
+```bash
+cd backend
+docker compose up --build
+```
+
+### Hybrid mode
+
+Use Docker only for infrastructure while running Python processes locally:
+
+```bash
+cd backend
+docker compose up -d db redis
+```
+
+### Standalone MCP mode
 
 ```bash
 cd backend
 uvicorn mcp.server:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Note: main API also mounts MCP at /mcp when available.
+## Testing and Verification
 
-## Environment Variables (Backend)
-
-Configured by backend/api/core/config.py (load order supports .env):
-- app_name, app_version, api_prefix, debug
-- database_url, redis_url
-- secret_key, access_token_expire_minutes, algorithm
-- cors_origins, frontend_app_url
-- google_client_id, google_client_secret, google_redirect_uri
-- github_client_id, github_client_secret, github_redirect_uri, github_webhook_secret
-- notion_client_id, notion_client_secret, notion_redirect_uri
-- spotify_client_id, spotify_client_secret, spotify_redirect_uri
-- slack_client_id, slack_client_secret, slack_redirect_uri
-- rag_llm_enabled, rag_llm_provider, rag_llm_base_url, rag_llm_model
-
-## Running Commands Cheat Sheet
-
-Backend API:
+### Backend tests
 
 ```bash
 cd backend
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+py -3 -m pytest tests/ -q
 ```
 
-Run tests:
+### Live backend smoke tests
+
+The repository includes hosted-backend smoke tests that default to `https://api.personalapi.tech` unless `BASE_URL` is overridden.
 
 ```bash
 cd backend
-pytest
+python -m pytest tests/test_live_backend.py -v -s
 ```
 
-Run only GitHub-related tests:
-
-```bash
-cd backend
-pytest tests/test_api.py -k "github"
-```
-
-Frontend:
+### Frontend quality checks
 
 ```bash
 cd frontend
-npm run dev
+npm run lint
+npm run build
 ```
 
-## Health and Verification
+Recommended pre-merge validation:
 
-Backend health:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-LLM health:
-
-```bash
-curl http://127.0.0.1:8000/health/llm
-```
-
-Swagger docs:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## API Quick Reference
-
-- GET /health
-- GET /health/llm
-- /auth/*
-- /v1/emails
-- /v1/documents
-- /v1/search
-- /v1/chat/*
-- /v1/connectors/*
-- /v1/developer/api-keys*
-- /ws
-- /mcp/*
-
-## Frontend Working Summary
-
-The frontend uses an Axios client with bearer-token injection and React Query for server-state synchronization.
-
-Runtime behavior:
-1. User token is loaded from browser storage.
-2. API calls go through frontend/lib/api-client.ts.
-3. Connectors are fetched and mutated through hooks in frontend/hooks.
-4. Query invalidation refreshes connector state after sync actions.
-5. UI can consume websocket events for realtime sync status updates.
+1. Run backend tests.
+2. Run frontend lint and production build.
+3. Verify configured connector auth URLs.
+4. Verify `GET /health`, `GET /health/llm`, and `GET /mcp/health`.
 
 ## Operational Notes
 
-- Sync is intentionally asynchronous: API enqueues, workers process.
-- Data isolation is enforced by user_id checks at query time.
-- API keys are only shown once at creation, then stored as hashes.
-- Retrieval responses include sources for traceability.
-- Queue failures are retried and can be pushed to dead-letter keys in Redis.
+### Security model
 
-## Additional Documentation
+- JWT-based user authentication is used for dashboard and API access.
+- Developer API keys are stored as SHA-256 hashes, not raw secrets.
+- User data access is guarded by authenticated user ownership checks.
+- The backend intentionally blocks startup on database connectivity failures.
 
-- docs/01-system-architecture.md
-- docs/02-implementation-guide.md
-- docs/03-deployment-and-scaling.md
-- docs/FRONTEND_API_REFERENCE.md
-- docs/postman/PersonalAPI.postman_collection.json
+### Sync model
+
+- Sync work is routed to per-platform queues.
+- Automatic sync dispatch is handled by Celery beat.
+- Failed worker jobs are pushed into a Redis-backed dead-letter queue pattern.
+- Connector tokens and cursors are updated during sync cycles.
+
+### Storage model
+
+- Relational metadata and retrieval state live in PostgreSQL.
+- Redis is required for worker execution.
+- User-owned source artifacts are written under `backend/storage/users`.
+
+## Production Readiness Checklist
+
+- Replace all placeholder secrets and OAuth credentials.
+- Ensure PostgreSQL has `pgvector` and `pg_trgm` available before bootstrapping.
+- Run migrations before exposing the API to traffic.
+- Put the backend behind TLS termination.
+- Restrict CORS to approved frontend origins.
+- Run dedicated worker processes for every required queue.
+- Monitor API health, worker failures, Redis availability, and database latency.
+- Protect provider callback URLs and webhook secrets with production values.
+- Back up PostgreSQL and persisted user-storage volumes.
+- Verify API key rotation and revocation paths.
+
+## Troubleshooting
+
+### API fails during startup
+
+Common causes:
+
+- invalid `DATABASE_URL`
+- unreachable PostgreSQL host
+- missing schema or missing extensions
+
+Check database connectivity, migration status, and `DATABASE_SSL_MODE`.
+
+### Connector OAuth endpoints return `503`
+
+This usually means the relevant provider credentials are not configured in the environment.
+
+### Search or chat returns empty results
+
+Check whether:
+
+- a connector sync actually ran
+- normalized items were inserted
+- the embedding pipeline processed chunks
+- retrieval tables contain data for the current user
+
+### WebSocket events are missing
+
+Check:
+
+- worker completion paths
+- the authenticated WebSocket token
+- Redis availability
+
+## Documentation
+
+Additional project documentation is available in:
+
+- `docs/01-system-architecture.md`
+- `docs/02-implementation-guide.md`
+- `docs/03-deployment-and-scaling.md`
+- `docs/backend-implementation-log.md`
+- `docs/FRONTEND_API_REFERENCE.md`
+- `frontend/docs/API_INTEGRATION.md`
+- `frontend/docs/DASHBOARD_DESIGN.md`
+- `frontend/docs/LANDING_PAGE.md`
+
+## Contributors
+
+Contributor details below are consolidated from repository history and project ownership.
+
+- Om Sakhare: https://github.com/Arch-777
+- Ansh Jadhav: https://github.com/JadhavAnsh
+- Nishant Patil: https://github.com/const-nishant
+- Pratik Dandge: https://github.com/Insomniac-Coder0
