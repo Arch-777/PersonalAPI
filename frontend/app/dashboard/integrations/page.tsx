@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConnectors, useGetConnectUrl, useSyncConnector } from "@/hooks/use-integrations";
 import { Loader2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { toast } from "sonner";
 
 const SUPPORTED_INTEGRATIONS = [
@@ -18,7 +18,7 @@ const SUPPORTED_INTEGRATIONS = [
   { name: "Spotify", platform: "spotify" },
 ];
 
-export default function IntegrationsPage() {
+function IntegrationsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -162,5 +162,13 @@ export default function IntegrationsPage() {
         })}
       </div>
     </div>
+  );
+}
+
+export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-zinc-500" /></div>}>
+      <IntegrationsContent />
+    </Suspense>
   );
 }
