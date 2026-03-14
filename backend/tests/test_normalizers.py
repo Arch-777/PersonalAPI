@@ -8,6 +8,7 @@ from normalizer.base import NormalizedItem
 from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
 from normalizer.gmail import GmailNormalizer
+from normalizer.github import GitHubNormalizer
 from normalizer.notion import NotionNormalizer
 from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
@@ -59,6 +60,41 @@ def test_drive_normalizer_maps_document_fields():
 	assert item.title == "Specs"
 	assert item.sender_name == "Bob"
 	assert item.metadata_json["mime_type"] == "application/pdf"
+
+
+def test_github_normalizer_maps_repository_fields():
+	normalizer = GitHubNormalizer()
+	row = {
+		"id": 123,
+		"node_id": "R_kgDOGH123",
+		"name": "personal-api",
+		"full_name": "arch-777/personal-api",
+		"description": "Personal knowledge backend",
+		"html_url": "https://github.com/arch-777/personal-api",
+		"clone_url": "https://github.com/arch-777/personal-api.git",
+		"private": False,
+		"fork": False,
+		"default_branch": "main",
+		"visibility": "public",
+		"language": "Python",
+		"topics": ["rag", "fastapi"],
+		"stargazers_count": 10,
+		"forks_count": 2,
+		"open_issues_count": 1,
+		"updated_at": "2026-03-14T10:00:00Z",
+		"owner": {"login": "arch-777"},
+	}
+
+	item = normalizer.normalize_record(row)
+
+	assert item is not None
+	assert item.type == "repository"
+	assert item.source == "github"
+	assert item.title == "arch-777/personal-api"
+	assert item.sender_name == "arch-777"
+	assert item.metadata_json["html_url"] == "https://github.com/arch-777/personal-api"
+	assert item.metadata_json["visibility"] == "public"
+	assert item.metadata_json["stars"] == 10
 
 
 def test_gcal_normalizer_maps_event_fields():

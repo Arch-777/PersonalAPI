@@ -33,6 +33,7 @@ def _broadcast(user_id: str, event: str, data: dict[str, Any]) -> None:
 from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
 from normalizer.gmail import GmailNormalizer
+from normalizer.github import GitHubNormalizer
 from normalizer.notion import NotionNormalizer
 from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
@@ -55,6 +56,7 @@ NORMALIZERS: dict[str, BaseNormalizer] = {
     "gmail": GmailNormalizer(),
     "drive": DriveNormalizer(),
     "gcal": GCalNormalizer(),
+    "github": GitHubNormalizer(),
     "notion": NotionNormalizer(),
     "slack": SlackNormalizer(),
     "spotify": SpotifyNormalizer(),
@@ -338,6 +340,8 @@ def _fetch_platform_records(
         return _fetch_drive_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "gcal":
         return _fetch_gcal_records(access_token=access_token, source_cursor=source_cursor)
+    if platform == "github":
+        return _fetch_github_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "notion":
         return _fetch_notion_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "slack":
@@ -345,6 +349,55 @@ def _fetch_platform_records(
     if platform == "spotify":
         return _fetch_spotify_records(access_token=access_token, source_cursor=source_cursor)
     raise ValueError(f"Unsupported connector platform '{platform}'")
+
+
+def _fetch_github_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
+    cursor_state = _parse_state_cursor(source_cursor)
+
+    page = 1
+    raw_page = cursor_state.get("page_token")
+    if raw_page and raw_page.isdigit():
+        page = max(int(raw_page), 1)
+
+    per_page = 50
+    params = {
+        "sort": "updated",
+        "direction": "desc",
+        "per_page": per_page,
+        "page": page,
+        "affiliation": "owner,collaborator,organization_member",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
+        response = client.get("https://api.github.com/user/repos", params=params, headers=headers)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if response.status_code in {401, 403}:
+                detail = _extract_http_error_message(response)
+                raise NonRetryableSyncError(
+                    f"GitHub API permission/auth error ({response.status_code}) for https://api.github.com/user/repos: {detail}"
+                ) from exc
+            raise
+        payload = response.json()
+
+    if not isinstance(payload, list):
+        raise ValueError("Unexpected GitHub repos payload; expected a list")
+
+    rows = [repo for repo in payload if isinstance(repo, dict)]
+
+    if len(rows) >= per_page:
+        next_cursor = _encode_state_cursor({"page_token": str(page + 1)})
+    else:
+        next_cursor = _encode_state_cursor({"page_token": "1"})
+
+    return rows, next_cursor
 
 
 def _fetch_gmail_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:

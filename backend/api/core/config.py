@@ -46,6 +46,11 @@ class Settings(BaseSettings):
 	slack_client_secret: str = Field(default="")
 	slack_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/slack/callback")
 
+	github_client_id: str = Field(default="")
+	github_client_secret: str = Field(default="")
+	github_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/github/callback")
+	github_webhook_secret: str = Field(default="")
+
 	notion_client_id: str = Field(default="")
 	notion_client_secret: str = Field(default="")
 	notion_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/notion/callback")

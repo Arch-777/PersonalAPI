@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+import hashlib
+import hmac
 
 import pytest
 from fastapi.testclient import TestClient
@@ -544,5 +546,59 @@ def test_disconnect_returns_400_for_unknown_platform():
 	response = client.delete("/v1/connectors/unknown_service")
 
 	assert response.status_code == 400
+
+	app.dependency_overrides.clear()
+
+
+def test_github_webhook_signature_helper_validation():
+	from api.routers import connectors as connectors_router
+
+	secret = "webhook-secret"
+	payload = b'{"repository":{"full_name":"arch-777/personal-api"}}'
+	valid_signature = "sha256=" + hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+	assert connectors_router._is_valid_github_webhook_signature(secret, payload, valid_signature) is True
+	assert connectors_router._is_valid_github_webhook_signature(secret, payload, "sha256=deadbeef") is False
+
+
+def test_github_webhook_ping_returns_ok(monkeypatch):
+	from api.routers import connectors as connectors_router
+
+	secret = "webhook-secret"
+	body = b'{"zen":"Keep it logically awesome."}'
+	signature = "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+	class _FakeWebhookResult:
+		def scalars(self):
+			return _FakeScalarResult([])
+
+	class _FakeWebhookDb:
+		def execute(self, _stmt):
+			return _FakeWebhookResult()
+
+	app.dependency_overrides[get_db] = lambda: _FakeWebhookDb()
+
+	monkeypatch.setattr(
+		connectors_router,
+		"get_settings",
+		lambda: SimpleNamespace(github_webhook_secret=secret, debug=False, enable_inline_sync_fallback=False),
+	)
+
+	client = TestClient(app)
+	response = client.post(
+		"/v1/connectors/github/webhook",
+		data=body,
+		headers={
+			"X-GitHub-Event": "ping",
+			"X-GitHub-Delivery": "delivery-123",
+			"X-Hub-Signature-256": signature,
+			"Content-Type": "application/json",
+		},
+	)
+
+	assert response.status_code == 200
+	body_json = response.json()
+	assert body_json["status"] == "ok"
+	assert body_json["event"] == "ping"
 
 	app.dependency_overrides.clear()
