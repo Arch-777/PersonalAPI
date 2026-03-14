@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
 import threading
 import urllib.parse
 import uuid
@@ -319,7 +320,9 @@ def github_connect(
     if not settings.github_client_id or not settings.github_client_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GitHub integration is not configured")
 
-    state = create_access_token(f"{current_user.id}|github", expires_minutes=10)
+    # Encode state as base64url(userId:randomHex) — mirrors the Next.js pattern
+    raw_state = f"{current_user.id}:{secrets.token_hex(16)}"
+    state = base64.urlsafe_b64encode(raw_state.encode()).rstrip(b"=").decode()
     params = {
         "client_id": settings.github_client_id,
         "scope": GITHUB_CONNECT_SCOPES,
@@ -369,12 +372,10 @@ def github_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     try:
-        payload = decode_access_token(state)
-        state_subject = str(payload["sub"])
-        user_part, platform_part = state_subject.split("|", maxsplit=1)
-        user_id = uuid.UUID(user_part)
-        if platform_part.strip().lower() != "github":
-            raise ValueError("Invalid connector in OAuth state")
+        # Restore base64url padding and decode userId:randomHex state
+        padding = (4 - len(state) % 4) % 4
+        decoded = base64.urlsafe_b64decode(state + "=" * padding).decode("utf-8")
+        user_id = uuid.UUID(decoded.split(":")[0])
     except Exception as exc:  # noqa: BLE001
         detail = "Invalid or expired state parameter"
         if redirect_to_frontend:
@@ -523,13 +524,19 @@ def github_callback(
         "scopes": token_data.get("scope"),
         "token_type": token_data.get("token_type"),
     }
-    _upsert_github_connector(
-        db=db,
-        user_id=user_id,
-        access_token=access_token,
-        platform_email=platform_email,
-        metadata=metadata,
-    )
+    try:
+        _upsert_github_connector(
+            db=db,
+            user_id=user_id,
+            access_token=access_token,
+            platform_email=platform_email,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        detail = "Failed to save GitHub connector"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail) from exc
 
     success_message = "Connected github"
     if redirect_to_frontend:
