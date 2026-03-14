@@ -105,7 +105,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             normalized_items = _normalize_records(platform, raw_records)
             rows = _persist_normalized_items(connector, normalized_items, source_cursor)
             upserted_item_ids = _upsert_items(db, rows)
-            _inline_index_items(db, upserted_item_ids, parsed_user_id)
+            indexing_stats = _dispatch_indexing_pipeline(db, upserted_item_ids, parsed_user_id)
 
             connector.sync_cursor = next_cursor
             connector.last_synced = datetime.now(UTC)
@@ -117,6 +117,8 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             "platform": platform,
             "connector_id": connector_id,
             "items_upserted": len(upserted_item_ids),
+            "embedding_jobs_queued": indexing_stats["queued"],
+            "embedding_jobs_inline": indexing_stats["inline"],
         })
 
         return {
@@ -127,6 +129,8 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             "records_fetched": len(raw_records),
             "records_normalized": len(normalized_items),
             "items_upserted": len(upserted_item_ids),
+            "embedding_jobs_queued": indexing_stats["queued"],
+            "embedding_jobs_inline": indexing_stats["inline"],
             "next_cursor": next_cursor,
             "item_ids": [str(item_id) for item_id in upserted_item_ids],
         }
@@ -1083,26 +1087,51 @@ def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _inline_index_items(db, item_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:
-    """Chunk and embed upserted items within the current DB session so item_chunks
-    rows are populated synchronously on every sync, even without Celery workers."""
+def _dispatch_indexing_pipeline(db, item_ids: list[uuid.UUID], user_id: uuid.UUID) -> dict[str, int]:
+    """Queue embedding for upserted items and fallback to inline indexing if queueing fails."""
     if not item_ids:
-        return
+        return {"queued": 0, "inline": 0}
+
+    try:
+        # Local import avoids a hard import cycle at module import time.
+        from workers.celery_app import celery_app
+    except Exception:  # noqa: BLE001
+        celery_app = None
 
     items = db.execute(
         select(Item).where(Item.id.in_(item_ids), Item.user_id == user_id)
     ).scalars().all()
 
+    queued_jobs = 0
+    inline_jobs = 0
+
     for item in items:
+        metadata = dict(item.metadata_json or {})
+        metadata["embedding_status"] = "queued"
+        item.metadata_json = metadata
+
+        if celery_app is not None:
+            try:
+                celery_app.send_task(
+                    "workers.embedding_worker.embed_item",
+                    args=[str(item.id), str(user_id), None],
+                )
+                queued_jobs += 1
+                continue
+            except Exception:
+                logger.exception("Failed to queue embedding task for item %s; falling back to inline indexing", item.id)
+
         try:
             result = index_item_chunks(db=db, item=item)
-            metadata = dict(item.metadata_json or {})
             metadata["embedding_status"] = "completed"
             metadata["embedded_at"] = datetime.now(UTC).isoformat()
             metadata["chunk_count"] = result.chunk_count
             item.metadata_json = metadata
+            inline_jobs += 1
         except Exception:
             logger.exception("Inline indexing failed for item %s", item.id)
+
+    return {"queued": queued_jobs, "inline": inline_jobs}
 
 
 def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:

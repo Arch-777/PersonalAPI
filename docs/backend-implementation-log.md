@@ -759,6 +759,23 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Optional: prune duplicate connector shortcut requests if you want a leaner collection focused only on canonical generic endpoints.
 
+## Step 49 - Connector Sync Indexing Offload (GitHub Throughput Fix)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Replaced inline post-upsert indexing call in connector sync with a new dispatch path that queues embedding jobs to `workers.embedding_worker.embed_item`.
+    - Added resilient fallback behavior: if task enqueue fails, the worker performs inline indexing for that item to avoid data-loss.
+    - Updated sync-complete payload and task return payload with indexing telemetry:
+      - `embedding_jobs_queued`
+      - `embedding_jobs_inline`
+    - Set item `metadata.embedding_status` to `queued` before handoff, then to `completed` when inline fallback executes.
+- Verification:
+  - Targeted tests passed: `py -3 -m pytest tests/test_celery_foundation.py tests/test_normalizers.py -q` -> 56 passed in 1.05s.
+- Next:
+  - Restart connector and embedding workers so the new handoff path is active.
+  - Watch Celery queue depth for `connector.github` vs `pipeline.embedding` to confirm indexing is now offloaded from connector workers.
+
 ## Step 50 - DB Startup Timeout Resilience (Retry + Optional Non-Blocking Dev Boot)
 - Status: Completed
 - Date: 2026-03-14
