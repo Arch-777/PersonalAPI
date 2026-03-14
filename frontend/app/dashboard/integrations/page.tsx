@@ -227,9 +227,9 @@ function IntegrationsContent() {
                     : "Not Connected"}
                 </Badge>
               </CardHeader>
-              
+
               <div className="flex-1" />
-              
+
               {isConnected && (
                 <div className="px-5 pb-4 flex items-center justify-between mt-auto">
                   <div className="flex items-center space-x-2">
@@ -237,9 +237,20 @@ function IntegrationsContent() {
                       id={`auto-sync-${c.platform}`}
                       checked={connector?.auto_sync_enabled || false}
                       onCheckedChange={(checked) => handleToggleAutoSync(c.platform, checked)}
-                      disabled={toggleAutoSync.isPending && toggleAutoSync.variables?.platform === c.platform}
+                      disabled={
+                        toggleAutoSync.isPending &&
+                        toggleAutoSync.variables?.platform === c.platform
+                      }
+                      className="data-[state=checked]:bg-[#18181B] data-[state=unchecked]:bg-zinc-200 focus-visible:ring-zinc-900"
                     />
-                    <Label htmlFor={`auto-sync-${c.platform}`} className="text-xs text-zinc-500 cursor-pointer">
+                    <Label
+                      htmlFor={`auto-sync-${c.platform}`}
+                      className="text-xs text-zinc-500 cursor-pointer flex items-center gap-1.5"
+                    >
+                      {toggleAutoSync.isPending &&
+                      toggleAutoSync.variables?.platform === c.platform ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : null}
                       Auto-sync
                     </Label>
                   </div>
@@ -251,7 +262,7 @@ function IntegrationsContent() {
                   <Button
                     onClick={() => handleConnect(c.platform)}
                     disabled={isConnecting}
-                    className="w-full h-10 rounded-lg font-medium transition-all duration-200 bg-[#18181b] text-zinc-50 hover:bg-[#27272a] shadow-sm"
+                    className="w-full h-10 rounded-lg font-medium transition-all duration-200 bg-[#18181B] text-zinc-50 hover:bg-[#27272A] shadow-sm"
                   >
                     {isConnecting ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/api-client';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 export interface SearchResult {
   id: string;
@@ -25,9 +25,9 @@ interface UseSearchOptions {
 }
 
 export const useSearch = ({ query, topK = 10, typeFilter = null }: UseSearchOptions) => {
-  return useQuery({
+  return useQuery<SearchResponse | null, Error>({
     queryKey: ['search', query, topK, typeFilter],
-    queryFn: async (): Promise<SearchResponse | null> => {
+    queryFn: async () => {
       if (!query.trim()) return null;
       
       const params = new URLSearchParams({
@@ -40,5 +40,8 @@ export const useSearch = ({ query, topK = 10, typeFilter = null }: UseSearchOpti
       return data;
     },
     enabled: !!query.trim(),
+    placeholderData: keepPreviousData,
+    staleTime: 60 * 1000, // 1 minute
+    retry: 3, // Auto retry
   });
 };

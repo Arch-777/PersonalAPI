@@ -1,5 +1,6 @@
 import { apiClient } from '@/lib/api-client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 export interface Connector {
   id?: string;
@@ -12,7 +13,7 @@ export interface Connector {
 }
 
 export const useConnectors = () => {
-  return useQuery({
+  return useQuery<Connector[], Error>({
     queryKey: ['connectors'],
     queryFn: async () => {
       try {
@@ -22,7 +23,9 @@ export const useConnectors = () => {
         console.error("Error fetching connectors, falling back to mock", error);
         return [] as Connector[];
       }
-    }
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 3,
   });
 };
 
@@ -35,6 +38,11 @@ export const useGetConnectUrl = () => {
       }
       const { data } = await apiClient.get(url);
       return data.url;
+    },
+    retry: 1, // Auto retry once
+    onError: (error) => {
+      const err = error as Error & { response?: { data?: { detail?: string } } };
+      toast.error(err.response?.data?.detail || 'Failed to get connection URL');
     }
   });
 };
@@ -47,8 +55,14 @@ export const useSyncConnector = () => {
       const { data } = await apiClient.post(`/v1/connectors/${platform}/sync`);
       return data;
     },
-    onSuccess: () => {
+    retry: 2, // Auto retry
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      toast.success(`${variables} sync started`);
+    },
+    onError: (error, variables) => {
+      const err = error as Error & { response?: { data?: { detail?: string } } };
+      toast.error(err.response?.data?.detail || `Failed to sync ${variables}`);
     }
   });
 };
@@ -70,14 +84,11 @@ export const useToggleAutoSync = () => {
       });
       return data;
     },
+    retry: 2, // Auto retry
     onMutate: async (newParams) => {
-      // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
       await queryClient.cancelQueries({ queryKey: ['connectors'] });
-
-      // Snapshot the previous value
       const previousConnectors = queryClient.getQueryData<Connector[]>(['connectors']);
 
-      // Optimistically update to the new value
       if (previousConnectors) {
         queryClient.setQueryData<Connector[]>(['connectors'], (old) => {
           if (!old) return old;
@@ -88,19 +99,37 @@ export const useToggleAutoSync = () => {
           );
         });
       }
-
-      // Return a context object with the snapshotted value
       return { previousConnectors };
     },
-    onError: (err, newParams, context) => {
-      // If the mutation fails, use the context returned from onMutate to roll back
+    onError: (error, newParams, context) => {
       if (context?.previousConnectors) {
         queryClient.setQueryData(['connectors'], context.previousConnectors);
       }
+      const err = error as Error & { response?: { data?: { detail?: string } } };
+      toast.error(err.response?.data?.detail || 'Failed to toggle auto sync');
     },
     onSettled: () => {
-      // Always refetch after error or success:
       queryClient.invalidateQueries({ queryKey: ['connectors'] });
+    },
+    onSuccess: (serverData, variables) => {
+      queryClient.setQueryData<Connector[]>(['connectors'], (old) => {
+        if (!old) return old;
+        return old.map((connector) => {
+          if (connector.platform !== variables.platform) return connector;
+
+          const serverConnector =
+            serverData && typeof serverData === 'object' && 'platform' in serverData
+              ? (serverData as Connector)
+              : null;
+
+          return {
+            ...(serverConnector ?? connector),
+            platform: connector.platform,
+            auto_sync_enabled: variables.enabled,
+          };
+        });
+      });
+      toast.success(`Auto sync ${variables.enabled ? 'enabled' : 'disabled'} for ${variables.platform}`);
     }
   });
 };
@@ -124,8 +153,14 @@ export const useDisconnectConnector = () => {
       const { data } = await apiClient.delete(`/v1/connectors/${platform}${queryString}`);
       return data;
     },
-    onSuccess: () => {
+    retry: 2, // Auto retry
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      toast.success(`Disconnected ${variables.platform} successfully`);
+    },
+    onError: (error, variables) => {
+      const err = error as Error & { response?: { data?: { detail?: string } } };
+      toast.error(err.response?.data?.detail || `Failed to disconnect ${variables.platform}`);
     }
   });
 };
