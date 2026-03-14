@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 	database_url: str = Field(default="postgresql+psycopg://postgres:localpass@localhost:5432/personalapi")
 	database_ssl_mode: str = Field(default="prefer")
 	database_connect_timeout: int = Field(default=10)
+	database_startup_check_required: bool = Field(default=True)
+	database_startup_check_retries: int = Field(default=1)
+	database_startup_check_retry_delay_seconds: float = Field(default=1.5)
 	redis_url: str = Field(default="redis://localhost:6379/0")
 	auto_sync_enabled: bool = Field(default=True)
 	auto_sync_dispatch_interval_seconds: int = Field(default=300)
@@ -31,6 +34,7 @@ class Settings(BaseSettings):
 	rag_llm_timeout_seconds: int = Field(default=45)
 	rag_llm_temperature: float = Field(default=0.2)
 	rag_llm_max_tokens: int = Field(default=512)
+	rag_llm_system_prompt: str = Field(default="")
 
 	secret_key: str = Field(default="change-me-in-production")
 	access_token_expire_minutes: int = Field(default=60)

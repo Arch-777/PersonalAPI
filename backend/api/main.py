@@ -20,7 +20,18 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-	check_database_connection()
+	try:
+		check_database_connection(
+			retries=settings.database_startup_check_retries,
+			retry_delay_seconds=settings.database_startup_check_retry_delay_seconds,
+		)
+	except RuntimeError:
+		if settings.database_startup_check_required:
+			raise
+		logger.warning(
+			"Database startup check failed, but continuing because DATABASE_STARTUP_CHECK_REQUIRED=false",
+			exc_info=True,
+		)
 	yield
 
 app = FastAPI(

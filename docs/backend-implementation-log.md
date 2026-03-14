@@ -759,6 +759,60 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Optional: prune duplicate connector shortcut requests if you want a leaner collection focused only on canonical generic endpoints.
 
+## Step 50 - DB Startup Timeout Resilience (Retry + Optional Non-Blocking Dev Boot)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/core/config.py:
+    - Added DB startup check controls:
+      - `DATABASE_STARTUP_CHECK_REQUIRED` (default `true`)
+      - `DATABASE_STARTUP_CHECK_RETRIES` (default `1`)
+      - `DATABASE_STARTUP_CHECK_RETRY_DELAY_SECONDS` (default `1.5`)
+  - backend/api/core/db.py:
+    - Upgraded `check_database_connection()` to include bounded retries with delay.
+  - backend/api/main.py:
+    - Lifespan startup now uses retry settings.
+    - If `DATABASE_STARTUP_CHECK_REQUIRED=false`, app logs warning and starts even if DB is unreachable.
+  - backend/.env.example:
+    - Added the new DB startup environment variables.
+- Verification:
+  - Compile validation passed:
+    - `py -3 -m compileall api\\core\\config.py api\\core\\db.py api\\main.py`
+- Next:
+  - For local unblock when DB endpoint is down or blocked, set:
+    - `DATABASE_STARTUP_CHECK_REQUIRED=false`
+  - For production, keep strict startup gate:
+    - `DATABASE_STARTUP_CHECK_REQUIRED=true`
+
+## Step 49 - RAG Smart Message Replies + Slack Intent Routing Fix
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/retriever.py:
+    - Added explicit Slack intent detection and routing (`prefers_slack`) so queries like "show my slack messages" constrain retrieval to Slack data.
+    - Reduced over-broad email intent tokening by removing generic `message/messages` from email hints.
+    - Added Slack-aware source constraints, source matching, and rerank bonuses to prevent Gmail-dominant false positives.
+  - backend/rag/context.py:
+    - Upgraded deterministic `compose_answer` to query-aware summaries with meaningful highlights.
+    - Added message digest mode for message/chat queries with concise top highlights and actionable follow-up guidance.
+    - Added Slack-specific empty-result guidance that tells users to sync Slack and suggests a better follow-up prompt.
+    - Added preview cleanup for invisible/control characters to keep replies readable.
+  - backend/rag/generator.py + backend/rag/engine.py + backend/api/core/config.py:
+    - Added stronger grounding/citation prompt instructions for Ollama generation.
+    - Added optional `RAG_LLM_SYSTEM_PROMPT` environment override.
+    - Prevented LLM call path when retrieval context is empty (deterministic fallback only).
+  - backend/tests/test_rag.py:
+    - Added regression tests for Slack-only routing on Slack message queries.
+    - Added tests for smarter message digest composition and Slack-empty guidance.
+    - Added tests for prompt grounding rules and no-context LLM skip behavior.
+- Verification:
+  - Targeted RAG suite passed: `py -3 -m pytest tests/test_rag.py -q` -> 25 passed.
+- Next:
+  - Restart backend service and validate with live prompts:
+    - "show my slack messages"
+    - "last 5 slack messages from #engineering"
+    - "only gmail messages about invoices"
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract

@@ -43,6 +43,7 @@ class RAGEngine:
 					timeout_seconds=settings.rag_llm_timeout_seconds,
 					temperature=settings.rag_llm_temperature,
 					max_tokens=settings.rag_llm_max_tokens,
+					system_prompt=settings.rag_llm_system_prompt,
 				)
 
 	def query(self, query: str, top_k: int = 8, type_filter: str | None = None, include_debug: bool = False) -> dict[str, Any]:
@@ -70,7 +71,7 @@ class RAGEngine:
 		answer = self.context_builder.compose_answer(normalized_query, retrieved)
 		answer_mode = "deterministic"
 
-		if self.use_llm and self.generator is not None:
+		if self.use_llm and self.generator is not None and built.sources:
 			try:
 				answer = self.generator.generate(query=normalized_query, context_text=built.context_text)
 				answer_mode = "llm"

@@ -11,6 +11,7 @@ from rag.chunker import chunk_text
 from rag.context import ContextBuilder
 from rag.embedder import DeterministicEmbedder, cosine_similarity
 from rag.engine import RAGEngine
+from rag.generator import OllamaGenerator
 from rag.retriever import HybridRetriever, RetrievedItem
 
 
@@ -406,6 +407,49 @@ def test_hybrid_retriever_routes_last_mail_query_to_recent_gmail_only():
 	assert all(result.type == "email" for result in results)
 
 
+def test_hybrid_retriever_routes_slack_message_query_to_slack_only():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="message",
+			source="slack",
+			source_id="slack-1",
+			title="standup update",
+			summary="Daily sync",
+			content="Deploy completed in #engineering",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+			sender_name="dev-user",
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="email",
+			source="gmail",
+			source_id="msg-1",
+			title="newsletter",
+			summary="Weekly update",
+			content="A long email body",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+			sender_name=None,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="show my slack messages", top_k=8)
+
+	assert len(results) == 1
+	assert results[0].source == "slack"
+
+
 def test_hybrid_retriever_understands_docs_token_and_excludes_spotify_noise():
 	now = datetime.now(UTC)
 	rows = [
@@ -557,6 +601,39 @@ def test_context_builder_collects_sources_and_links():
 	assert "drive/document" in built.context_text
 
 
+def test_context_builder_compose_answer_builds_message_digest_for_slack_query():
+	now = datetime.now(UTC)
+	builder = ContextBuilder()
+	retrieved = [
+		RetrievedItem(
+			id="slack-1",
+			type="message",
+			source="slack",
+			title="Standup update",
+			summary="Backend deploy finished",
+			content="Deploy completed for API and worker",
+			metadata={"channel_name": "engineering", "channel_type": "public_channel"},
+			item_date=now,
+			file_path=None,
+			score=1.0,
+		),
+	]
+
+	answer = builder.compose_answer("show my slack messages", retrieved)
+
+	assert "Slack message" in answer
+	assert "Top highlights" in answer
+	assert "#engineering" in answer
+
+
+def test_context_builder_compose_answer_mentions_slack_sync_when_no_data():
+	builder = ContextBuilder()
+	answer = builder.compose_answer("show my slack messages", [])
+
+	assert "could not find Slack messages" in answer
+	assert "Sync your Slack connector" in answer
+
+
 def test_rag_engine_returns_answer_with_sources():
 	now = datetime.now(UTC)
 	rows = [
@@ -672,6 +749,37 @@ def test_rag_engine_returns_fallback_answer_mode_when_llm_fails():
 	assert result["answer_mode"] == "fallback"
 	assert isinstance(result["answer"], str)
 	assert result["answer"]
+
+
+def test_rag_engine_skips_llm_when_no_retrieved_sources():
+	class _TrackingGenerator:
+		def __init__(self):
+			self.called = False
+
+		def generate(self, query: str, context_text: str) -> str:
+			self.called = True
+			return "should not be used"
+
+	db = FakeRetrieverDb([])
+	gen = _TrackingGenerator()
+	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=gen, use_llm=True)
+	result = engine.query("what is my architecture", top_k=5)
+
+	assert gen.called is False
+	assert result["answer_mode"] == "deterministic"
+	assert "could not find relevant items" in result["answer"].lower()
+
+
+def test_ollama_prompt_contains_grounding_and_citation_rules():
+	generator = OllamaGenerator(base_url="http://localhost:11434", model="qwen2.5:1.5b")
+	prompt = generator._build_prompt(
+		query="What did I write about roadmap?",
+		context_text="[1] (notion/document) score=1.200 id=abc :: Roadmap has Q2 milestones",
+	)
+
+	assert "Retrieved Context" in prompt
+	assert "source numbers like [1], [2]" in prompt
+	assert "Only answer using retrieved context" in prompt
 
 
 class FakeChatDb:

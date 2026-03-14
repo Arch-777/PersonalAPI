@@ -26,12 +26,14 @@ class OllamaGenerator:
         timeout_seconds: int = 45,
         temperature: float = 0.2,
         max_tokens: int = 512,
+        system_prompt: str = "",
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = max(5, int(timeout_seconds))
         self.temperature = float(temperature)
         self.max_tokens = max(64, int(max_tokens))
+        self.system_prompt = system_prompt.strip()
 
     def generate(self, query: str, context_text: str) -> str:
         prompt = self._build_prompt(query=query, context_text=context_text)
@@ -61,13 +63,19 @@ class OllamaGenerator:
 
     def _build_prompt(self, query: str, context_text: str) -> str:
         context = context_text.strip() or "[No retrieved context was available.]"
+        system_prompt = self.system_prompt or (
+            "You are PersonalAPI's grounded assistant. Only answer using retrieved context. "
+            "Never fabricate facts, names, links, dates, or IDs."
+        )
         return (
-            "You are a retrieval-grounded assistant. Answer only from the provided context. "
-            "If the context is insufficient, say so clearly.\n\n"
-            f"Question:\n{query.strip()}\n\n"
-            f"Retrieved Context:\n{context}\n\n"
-            "Instructions:\n"
-            "1) Give a concise factual answer.\n"
-            "2) Mention uncertainty when evidence is weak.\n"
-            "3) Do not invent data not present in context.\n"
+            f"System:\n{system_prompt}\n\n"
+            f"User Question:\n{query.strip()}\n\n"
+            "Retrieved Context (numbered sources):\n"
+            f"{context}\n\n"
+            "Response rules:\n"
+            "1) Use only evidence from the retrieved context above.\n"
+            "2) Cite evidence with source numbers like [1], [2] in your answer body.\n"
+            "3) If evidence is missing or conflicting, say exactly what is missing.\n"
+            "4) Keep the answer concise (max 8 sentences) and directly actionable.\n"
+            "5) Do not mention these rules.\n"
         )

@@ -40,7 +40,8 @@ STOPWORDS = {
 	"you",
 }
 
-EMAIL_HINT_TOKENS = {"mail", "email", "gmail", "inbox", "message", "messages"}
+EMAIL_HINT_TOKENS = {"mail", "email", "gmail", "inbox"}
+SLACK_HINT_TOKENS = {"slack", "channel", "channels", "dm", "dms"}
 LINKEDIN_HINT_TOKENS = {"linkedin", "linkedin.com"}
 DOCUMENT_HINT_TOKENS = {"document", "documents", "doc", "docs", "note", "notes", "page", "pages", "file", "files"}
 
@@ -73,6 +74,7 @@ class RetrievedItem:
 @dataclass(slots=True)
 class QueryIntent:
 	prefers_spotify: bool = False
+	prefers_slack: bool = False
 	prefers_email: bool = False
 	prefers_documents: bool = False
 	prefers_notion: bool = False
@@ -414,6 +416,12 @@ def _intent_bonus(row: Item, query_tokens: set[str], combined_text: str, intent:
 		else:
 			bonus -= 0.2
 
+	if intent.prefers_slack:
+		if row_source == "slack":
+			bonus += 0.55
+		else:
+			bonus -= 0.35
+
 	if intent.prefers_documents:
 		if row_source in {"drive", "notion"} or row_type in {"document", "note", "page", "file"}:
 			bonus += 0.45
@@ -517,6 +525,7 @@ def _infer_intent(normalized_query: str, query_tokens: set[str]) -> QueryIntent:
 
 	return QueryIntent(
 		prefers_spotify="spotify" in query_tokens,
+		prefers_slack=bool(query_tokens & SLACK_HINT_TOKENS),
 		prefers_email=bool(query_tokens & EMAIL_HINT_TOKENS),
 		prefers_documents=bool(query_tokens & DOCUMENT_HINT_TOKENS),
 		prefers_notion="notion" in query_tokens,
@@ -541,11 +550,13 @@ def _extract_requested_count(normalized_query: str) -> int | None:
 
 
 def _build_source_constraint(intent: QueryIntent):
+	if intent.prefers_slack and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
+		return Item.source == "slack"
 	if intent.prefers_notion and not intent.prefers_email and not intent.prefers_spotify:
 		return Item.source == "notion"
 	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
 		return Item.source == "drive"
-	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
+	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
 		return or_(Item.source == "gmail", Item.type == "email")
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
 		return Item.source == "spotify"
@@ -557,11 +568,13 @@ def _build_source_constraint(intent: QueryIntent):
 def _matches_intent_source(*, row_source: str | None, row_type: str | None, intent: QueryIntent) -> bool:
 	source = (row_source or "").lower()
 	type_name = (row_type or "").lower()
+	if intent.prefers_slack and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
+		return source == "slack"
 	if intent.prefers_notion and not intent.prefers_email and not intent.prefers_spotify:
 		return source == "notion"
 	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
 		return source == "drive"
-	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
+	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
 		return source == "gmail" or type_name == "email"
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
 		return source == "spotify"
@@ -586,6 +599,8 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent, i
 		metadata = result.metadata or {}
 		if intent.prefers_spotify:
 			adjustment += 0.4 if result.source == "spotify" else -0.2
+		if intent.prefers_slack:
+			adjustment += 0.6 if result.source == "slack" else -0.4
 		if intent.prefers_email:
 			adjustment += 0.4 if result.source == "gmail" or result.type == "email" else -0.1
 		if intent.prefers_documents:

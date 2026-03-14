@@ -1,4 +1,5 @@
 from collections.abc import Generator
+import time
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -33,11 +34,18 @@ def get_db() -> Generator[Session, None, None]:
 		db.close()
 
 
-def check_database_connection() -> None:
-	"""Validate database reachability; raise RuntimeError on failure."""
-	try:
-		with engine.connect() as conn:
-			conn.execute(text("SELECT 1"))
-	except SQLAlchemyError as exc:
-		raise RuntimeError(f"Database connection failed: {exc}") from exc
+def check_database_connection(retries: int = 0, retry_delay_seconds: float = 1.0) -> None:
+	"""Validate database reachability with bounded retries; raise RuntimeError on failure."""
+	attempts = max(0, int(retries)) + 1
+	for attempt in range(1, attempts + 1):
+		try:
+			with engine.connect() as conn:
+				conn.execute(text("SELECT 1"))
+			return
+		except SQLAlchemyError as exc:
+			if attempt >= attempts:
+				raise RuntimeError(f"Database connection failed: {exc}") from exc
+			delay = max(0.0, float(retry_delay_seconds))
+			if delay > 0:
+				time.sleep(delay)
 
