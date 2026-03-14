@@ -1291,3 +1291,21 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Manual config review confirms removed keys are optional because defaults are defined in `api/core/config.py`.
 - Next:
   - If runtime tuning is needed, set the removed variables explicitly in deployment-specific env files.
+
+## Step 46 - Chat History Query and Recent-First Support
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/chat.py:
+    - Extended `GET /v1/chat/{session_id}/history` with `query` and `order` query params.
+    - Added case-insensitive content filtering for in-session history search.
+    - Added `order=desc` support so `limit` can return the most recent chat messages instead of always returning the oldest rows.
+  - backend/tests/test_api.py:
+    - Added regression coverage for recent-first history retrieval and content-query filtering.
+  - docs/FRONTEND_API_REFERENCE.md:
+    - Documented the new `query` and `order` params for chat history.
+- Verification:
+  - Targeted API regression suite passed locally for chat history changes.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py -q`
+- Next:
+  - Wire the frontend chat UI to call `GET /v1/chat/{session_id}/history?order=desc&limit=<n>` for recent-message views or sidebars.
