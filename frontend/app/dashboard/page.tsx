@@ -81,7 +81,7 @@ export default function DashboardHome() {
   return (
     <div className="space-y-8 flex-1">
       <div>
-        <h1 className="text-3xl font-bold font-serif tracking-tight">Good morning, {user?.full_name || "User"}</h1>
+        <h1 className="text-3xl font-bold font-sans tracking-tight">Good morning, {user?.full_name || "User"}</h1>
         <p className="text-muted-foreground mt-2">Here is a quick overview of your personal knowledge layer today.</p>
       </div>
 
@@ -89,14 +89,14 @@ export default function DashboardHome() {
         {stats.map((stat, i) => (
           <div key={i} className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
             <p className="text-sm text-balance text-muted-foreground">{stat.label}</p>
-            <div className="mt-4 text-3xl font-bold font-serif">{stat.value}</div>
+            <div className="mt-4 text-3xl font-bold font-sans">{stat.value}</div>
           </div>
         ))}
       </div>
 
       <div className="rounded-xl border bg-card text-card-foreground shadow-sm mt-8">
         <div className="p-6">
-          <h3 className="text-lg font-serif font-medium">Recent Activity</h3>
+          <h3 className="text-lg font-sans font-medium">Recent Activity</h3>
           <p className="text-sm text-muted-foreground mt-1">Your latest searches and system synchronizations.</p>
         </div>
         <div className="px-6 pb-6 pt-0">
