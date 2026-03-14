@@ -22,6 +22,7 @@ const SUPPORTED_INTEGRATIONS = [
   { name: "Slack", platform: "slack" },
   { name: "Gmail", platform: "gmail" },
   { name: "Spotify", platform: "spotify" },
+  { name: "GitHub", platform: "github" },
 ];
 
 function IntegrationsContent() {
