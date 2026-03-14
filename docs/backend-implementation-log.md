@@ -1309,3 +1309,18 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Command (from `backend/`): `py -3 -m pytest tests/test_api.py -q`
 - Next:
   - Wire the frontend chat UI to call `GET /v1/chat/{session_id}/history?order=desc&limit=<n>` for recent-message views or sidebars.
+
+## Step 47 - Postman Coverage for Recent Chat History Queries
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Updated `Chat -> Get History` description to clarify oldest-to-newest ordering.
+    - Added `Chat -> Get Recent History` request using `limit=20&order=desc`.
+    - Added optional disabled `query=plan` param so Postman users can enable in-session content filtering without sending an empty query value by default.
+    - Added response assertions for recent-history request shape and limit behavior.
+- Verification:
+  - Collection JSON syntax validated.
+  - Command (from workspace root): `python -m json.tool docs/postman/PersonalAPI.postman_collection.json`
+- Next:
+  - Use `Get Recent History` for sidebar/recent-chat manual testing, and enable the `query` param when validating in-session search behavior.
