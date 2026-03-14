@@ -814,6 +814,28 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - If timeouts continue frequently, increase `RAG_LLM_TIMEOUT_SECONDS` or check Ollama CPU/RAM saturation.
 
+## Step 52 - Disconnect Cascade Semantics + Frontend Alignment
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Added validation guard for `cascade_google=true` on non-Google platforms for both:
+      - `DELETE /v1/connectors/{platform}`
+      - `PATCH /v1/connectors/{platform}/auto-sync`
+    - Now returns `400` with a clear message when `cascade_google` is used outside `gmail`/`drive`/`gcal`.
+  - backend/tests/test_api.py:
+    - Added regression tests ensuring non-Google `cascade_google=true` is rejected for disconnect and auto-sync.
+  - frontend/hooks/use-integrations.ts:
+    - Fixed `cascade_google` handling to be sent as query param only for Google platforms.
+    - Kept payload body for auto-sync as `{ enabled }` only.
+  - frontend/app/dashboard/integrations/page.tsx:
+    - Updated disconnect action to request `delete_data=true` (remove synced data) and apply `cascade_google` only for Google integrations.
+    - Updated confirmation/toast text to reflect data removal behavior.
+- Verification:
+  - Targeted backend tests passed: `py -3 -m pytest tests/test_api.py -k "disconnect or auto_sync" -q` -> 8 passed.
+- Next:
+  - Optional: add a UI toggle in Integrations page to let users choose between disconnect-only and disconnect+delete-data.
+
 ## Step 49 - RAG Smart Message Replies + Slack Intent Routing Fix
 - Status: Completed
 - Date: 2026-03-14

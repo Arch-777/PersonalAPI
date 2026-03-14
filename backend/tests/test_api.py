@@ -712,6 +712,24 @@ def test_disconnect_google_platform_no_cascade_removes_only_one():
 	app.dependency_overrides.clear()
 
 
+def test_disconnect_rejects_cascade_google_for_non_google_platform():
+	user_id = uuid.uuid4()
+	connector = _make_connector("github", user_id)
+	fake_db = _FakeDisconnectDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/github?cascade_google=true")
+
+	assert response.status_code == 400
+	assert "only valid for gmail, drive, or gcal" in response.json()["detail"]
+
+	app.dependency_overrides.clear()
+
+
 def test_disconnect_returns_404_when_connector_not_found():
 	user_id = uuid.uuid4()
 	fake_db = _FakeDisconnectDb(connectors=[])  # no connectors
@@ -1125,3 +1143,22 @@ def test_set_connector_auto_sync_cascades_google_platforms_by_default():
 	assert set(body["platforms"]) == {"gmail", "drive", "gcal"}
 	assert body["auto_sync_enabled"] is True
 	assert all(c.metadata_json.get("auto_sync_enabled") is True for c in connectors)
+
+
+def test_set_connector_auto_sync_rejects_cascade_google_for_non_google_platform():
+	user_id = uuid.uuid4()
+	connector = _make_connector("spotify", user_id)
+	connector.metadata_json = {}
+	fake_db = _FakeAutoSyncToggleDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.patch("/v1/connectors/spotify/auto-sync?cascade_google=true", json={"enabled": False})
+
+	assert response.status_code == 400
+	assert "only valid for gmail, drive, or gcal" in response.json()["detail"]
+
+	app.dependency_overrides.clear()

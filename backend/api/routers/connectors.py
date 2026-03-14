@@ -1341,6 +1341,7 @@ def get_connector(
 )
 def disconnect_connector(
     platform: str,
+    request: Request,
     delete_data: bool = False,
     cascade_google: bool = True,
     current_user: User = Depends(get_current_user),
@@ -1359,6 +1360,16 @@ def disconnect_connector(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported connector platform '{normalized_platform}'",
+        )
+
+    if (
+        normalized_platform not in GOOGLE_CONNECTOR_PLATFORMS
+        and request is not None
+        and request.query_params.get("cascade_google", "").strip().lower() in {"1", "true", "yes", "on"}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cascade_google=true is only valid for gmail, drive, or gcal",
         )
 
     # Build the list of connector platforms to remove.
@@ -1418,6 +1429,7 @@ def disconnect_connector(
 )
 def set_connector_auto_sync(
     platform: str,
+    request: Request,
     body: ConnectorAutoSyncUpdateRequest,
     cascade_google: bool = True,
     current_user: User = Depends(get_current_user),
@@ -1428,6 +1440,16 @@ def set_connector_auto_sync(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported connector platform '{normalized_platform}'",
+        )
+
+    if (
+        normalized_platform not in GOOGLE_CONNECTOR_PLATFORMS
+        and request is not None
+        and request.query_params.get("cascade_google", "").strip().lower() in {"1", "true", "yes", "on"}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cascade_google=true is only valid for gmail, drive, or gcal",
         )
 
     if cascade_google and normalized_platform in GOOGLE_CONNECTOR_PLATFORMS:
