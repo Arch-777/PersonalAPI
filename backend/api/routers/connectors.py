@@ -62,6 +62,72 @@ GITHUB_CONNECT_SCOPES = "read:user user:email repo"
 GITHUB_WEBHOOK_EVENTS = {"push", "pull_request", "issues", "repository", "release", "create", "delete"}
 
 
+def _parse_github_token_response(token_response: object) -> dict[str, object]:
+    token_data: dict[str, object] = {}
+
+    def _set_if_missing(key: str, value: object) -> None:
+        normalized_key = key.strip()
+        if not normalized_key or normalized_key in token_data:
+            return
+        token_data[normalized_key] = value
+
+    raw_text = ""
+    response_text = getattr(token_response, "text", None)
+    if isinstance(response_text, str):
+        raw_text = response_text.strip()
+
+    parsed_json: object = None
+    json_loader = getattr(token_response, "json", None)
+    if callable(json_loader):
+        try:
+            parsed_json = json_loader()
+        except ValueError:
+            parsed_json = None
+
+    if isinstance(parsed_json, dict):
+        for key, value in parsed_json.items():
+            if isinstance(key, str):
+                _set_if_missing(key, value)
+    elif isinstance(parsed_json, str) and parsed_json.strip():
+        raw_text = parsed_json.strip()
+
+    if raw_text and "=" in raw_text:
+        for key, value in urllib.parse.parse_qsl(raw_text, keep_blank_values=True):
+            _set_if_missing(key, value)
+
+    return token_data
+
+
+def _build_github_token_exchange_error_detail(token_data: dict[str, object]) -> str | None:
+    github_error = token_data.get("error")
+    github_error_description = token_data.get("error_description")
+    github_message = token_data.get("message")
+
+    if isinstance(github_error, str) and github_error.strip():
+        detail = f"GitHub token exchange failed: {github_error.strip()}"
+        if isinstance(github_error_description, str) and github_error_description.strip():
+            detail += f" ({github_error_description.strip()})"
+        return detail
+
+    if isinstance(github_error_description, str) and github_error_description.strip():
+        return f"GitHub token exchange failed: {github_error_description.strip()}"
+
+    if isinstance(github_message, str) and github_message.strip():
+        return f"GitHub token exchange failed: {github_message.strip()}"
+
+    github_errors = token_data.get("errors")
+    if isinstance(github_errors, list) and github_errors:
+        first_error = github_errors[0]
+        if isinstance(first_error, str) and first_error.strip():
+            return f"GitHub token exchange failed: {first_error.strip()}"
+        if isinstance(first_error, dict):
+            first_message = first_error.get("message")
+            if isinstance(first_message, str) and first_message.strip():
+                return f"GitHub token exchange failed: {first_message.strip()}"
+
+    return None
+
+
 def _build_frontend_integrations_callback_url(platform: str, ok: bool, message: str | None = None) -> str:
     settings = get_settings()
     base = settings.frontend_app_url.rstrip("/")
@@ -241,7 +307,6 @@ def github_connect(
     state = create_access_token(f"{current_user.id}|github", expires_minutes=10)
     params = {
         "client_id": settings.github_client_id,
-        "redirect_uri": settings.github_redirect_uri,
         "scope": GITHUB_CONNECT_SCOPES,
         "state": state,
     }
@@ -257,6 +322,9 @@ def github_callback(
     settings = get_settings()
     if not settings.github_client_id or not settings.github_client_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GitHub integration is not configured")
+
+    code = code.strip()
+    state = state.strip()
 
     try:
         payload = decode_access_token(state)
@@ -276,7 +344,6 @@ def github_callback(
                     "client_id": settings.github_client_id,
                     "client_secret": settings.github_client_secret,
                     "code": code,
-                    "redirect_uri": settings.github_redirect_uri,
                 },
                 headers={
                     "Accept": "application/json",
@@ -284,13 +351,43 @@ def github_callback(
                 },
             )
             token_resp.raise_for_status()
-            token_data = token_resp.json()
+            token_data = _parse_github_token_response(token_resp)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange GitHub auth code for tokens") from exc
 
-    access_token = token_data.get("access_token")
-    if not isinstance(access_token, str) or not access_token.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token response from GitHub")
+    access_token_candidates = (
+        token_data.get("access_token"),
+        token_data.get("accessToken"),
+        token_data.get("token"),
+    )
+    access_token = next(
+        (
+            token_value.strip()
+            for token_value in access_token_candidates
+            if isinstance(token_value, str) and token_value.strip()
+        ),
+        None,
+    )
+    if access_token is None:
+        detail = _build_github_token_exchange_error_detail(token_data)
+        if detail is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+        response_status = getattr(token_resp, "status_code", "unknown")
+        response_content_type = token_resp.headers.get("content-type", "unknown")
+        response_text = getattr(token_resp, "text", "")
+        preview = ""
+        if isinstance(response_text, str) and response_text.strip():
+            preview = response_text.strip().replace("\r", " ").replace("\n", " ")[:220]
+
+        fallback_detail = (
+            "Invalid token response from GitHub [oauth-parser-v2]"
+            f" (status={response_status}, content_type={response_content_type}, token_fields={sorted(token_data.keys())})"
+        )
+        if preview:
+            fallback_detail += f": {preview}"
+
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fallback_detail)
 
     github_login: str | None = None
     github_name: str | None = None

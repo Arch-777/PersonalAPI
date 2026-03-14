@@ -132,6 +132,57 @@
       "type": "string"
     },
     {
+      "key": "githubAuthUrl",
+      "value": "",
+      "type": "string",
+      "description": "GitHub OAuth URL from /connectors/github/connect"
+    },
+    {
+      "key": "githubAuthCode",
+      "value": "",
+      "type": "string",
+      "description": "Code from GitHub OAuth callback"
+    },
+    {
+      "key": "githubAuthState",
+      "value": "",
+      "type": "string",
+      "description": "State from GitHub OAuth callback"
+    },
+    {
+      "key": "githubLogin",
+      "value": "",
+      "type": "string",
+      "description": "GitHub user login returned by callback"
+    },
+    {
+      "key": "githubWebhookSecret",
+      "value": "",
+      "type": "string",
+      "description": "Must match GITHUB_WEBHOOK_SECRET in backend"
+    },
+    {
+      "key": "githubWebhookDelivery",
+      "value": "postman-delivery-1",
+      "type": "string"
+    },
+    {
+      "key": "githubWebhookRepo",
+      "value": "Personal_API",
+      "type": "string",
+      "description": "Repository name used in webhook payload tests"
+    },
+    {
+      "key": "githubWebhookPayload",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "githubWebhookSignature",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "googleConnectorPlatform",
       "value": "gmail",
       "type": "string"
@@ -1088,6 +1139,343 @@
             },
             "description": "Shortcut: returns Google OAuth URL for Calendar connector onboarding."
           }
+        },
+        {
+          "name": "GitHub - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github/connect",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github", "connect"]
+            },
+            "description": "Returns GitHub OAuth authorize URL for the current user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connect URL exists', function () {",
+                  "  pm.expect(body).to.have.property('url');",
+                  "  pm.expect(body.url).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('githubAuthUrl', body.url);",
+                  "try {",
+                  "  var parsed = new URL(body.url);",
+                  "  var state = parsed.searchParams.get('state');",
+                  "  if (state) { pm.collectionVariables.set('githubAuthState', state); }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GitHub - Callback (Manual Code Exchange)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github/callback?code={{githubAuthCode}}&state={{githubAuthState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github", "callback"],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{githubAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{githubAuthState}}"
+                }
+              ]
+            },
+            "description": "Exchanges GitHub auth code/state and stores the GitHub connector access token."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var rawCode = pm.collectionVariables.get('githubAuthCode') || '';",
+                  "var rawState = pm.collectionVariables.get('githubAuthState') || '';",
+                  "function extractValue(input, key) {",
+                  "  if (!input || typeof input !== 'string') { return ''; }",
+                  "  var trimmed = input.trim();",
+                  "  if (!trimmed) { return ''; }",
+                  "  try {",
+                  "    if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0) {",
+                  "      var url = new URL(trimmed);",
+                  "      return (url.searchParams.get(key) || '').trim();",
+                  "    }",
+                  "  } catch (e) {}",
+                  "  var marker = key + '=';",
+                  "  var idx = trimmed.indexOf(marker);",
+                  "  if (idx >= 0) {",
+                  "    var fragment = trimmed.substring(idx + marker.length);",
+                  "    var amp = fragment.indexOf('&');",
+                  "    return decodeURIComponent((amp >= 0 ? fragment.substring(0, amp) : fragment).trim());",
+                  "  }",
+                  "  return trimmed;",
+                  "}",
+                  "var normalizedCode = extractValue(rawCode, 'code');",
+                  "var normalizedState = extractValue(rawState, 'state');",
+                  "if (normalizedCode) { pm.collectionVariables.set('githubAuthCode', normalizedCode); }",
+                  "if (normalizedState) { pm.collectionVariables.set('githubAuthState', normalizedState); }",
+                  "if (!normalizedCode) { throw new Error('githubAuthCode is empty. Complete GitHub consent first.'); }",
+                  "if (!normalizedState) { throw new Error('githubAuthState is empty. Run GitHub - Get Connect URL first.'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connector connected', function () {",
+                  "  pm.expect(body.status).to.eql('connected');",
+                  "  pm.expect(body.platform).to.eql('github');",
+                  "});",
+                  "if (body.github_login) { pm.collectionVariables.set('githubLogin', body.github_login); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GitHub - Get Connector",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github"]
+            },
+            "description": "Returns current GitHub connector state for the authenticated user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('GitHub connector payload exists', function () {",
+                  "  pm.expect(body.platform).to.eql('github');",
+                  "  pm.expect(body).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GitHub - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github", "sync"]
+            },
+            "description": "Queues a GitHub sync job for repositories accessible by the connector token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', function () { pm.response.to.have.status(202); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Sync queue response is valid', function () {",
+                  "  pm.expect(body.status).to.eql('sync_queued');",
+                  "  pm.expect(body.platform).to.eql('github');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GitHub - Webhook Ping (Signed)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-GitHub-Event",
+                "value": "ping"
+              },
+              {
+                "key": "X-GitHub-Delivery",
+                "value": "{{githubWebhookDelivery}}"
+              },
+              {
+                "key": "X-Hub-Signature-256",
+                "value": "{{githubWebhookSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{githubWebhookPayload}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github/webhook",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github", "webhook"]
+            },
+            "description": "Sends a signed GitHub ping webhook to validate webhook secret wiring."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var secret = pm.collectionVariables.get('githubWebhookSecret');",
+                  "if (!secret) { throw new Error('githubWebhookSecret is empty. Set it to backend GITHUB_WEBHOOK_SECRET first.'); }",
+                  "if (!pm.collectionVariables.get('githubWebhookDelivery')) {",
+                  "  pm.collectionVariables.set('githubWebhookDelivery', 'postman-delivery-' + Date.now());",
+                  "}",
+                  "var payloadObj = {",
+                  "  zen: 'postman-ping',",
+                  "  hook_id: 1,",
+                  "  repository: { full_name: 'demo/repo' }",
+                  "};",
+                  "var payload = JSON.stringify(payloadObj);",
+                  "var signature = 'sha256=' + CryptoJS.HmacSHA256(payload, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.collectionVariables.set('githubWebhookPayload', payload);",
+                  "pm.collectionVariables.set('githubWebhookSignature', signature);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Webhook ping accepted', function () {",
+                  "  pm.expect(body.status).to.eql('ok');",
+                  "  pm.expect(body.event).to.eql('ping');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GitHub - Webhook Push (Signed)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-GitHub-Event",
+                "value": "push"
+              },
+              {
+                "key": "X-GitHub-Delivery",
+                "value": "{{githubWebhookDelivery}}"
+              },
+              {
+                "key": "X-Hub-Signature-256",
+                "value": "{{githubWebhookSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{githubWebhookPayload}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/github/webhook",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "github", "webhook"]
+            },
+            "description": "Sends a signed push webhook payload to test connector matching and sync queueing."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var secret = pm.collectionVariables.get('githubWebhookSecret');",
+                  "if (!secret) { throw new Error('githubWebhookSecret is empty. Set it to backend GITHUB_WEBHOOK_SECRET first.'); }",
+                  "var owner = pm.collectionVariables.get('githubLogin');",
+                  "if (!owner) { throw new Error('githubLogin is empty. Run GitHub - Callback (Manual Code Exchange) first.'); }",
+                  "var repo = pm.collectionVariables.get('githubWebhookRepo') || 'Personal_API';",
+                  "if (!pm.collectionVariables.get('githubWebhookDelivery')) {",
+                  "  pm.collectionVariables.set('githubWebhookDelivery', 'postman-delivery-' + Date.now());",
+                  "}",
+                  "var payloadObj = {",
+                  "  ref: 'refs/heads/main',",
+                  "  repository: {",
+                  "    full_name: owner + '/' + repo,",
+                  "    owner: { login: owner }",
+                  "  },",
+                  "  pusher: { name: owner }",
+                  "};",
+                  "var payload = JSON.stringify(payloadObj);",
+                  "var signature = 'sha256=' + CryptoJS.HmacSHA256(payload, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.collectionVariables.set('githubWebhookPayload', payload);",
+                  "pm.collectionVariables.set('githubWebhookSignature', signature);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Webhook push handled', function () {",
+                  "  pm.expect(body.event).to.eql('push');",
+                  "  pm.expect(['accepted', 'ignored']).to.include(body.status);",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Slack - Get Connect URL",

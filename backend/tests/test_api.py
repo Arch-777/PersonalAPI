@@ -561,6 +561,40 @@ def test_github_webhook_signature_helper_validation():
 	assert connectors_router._is_valid_github_webhook_signature(secret, payload, "sha256=deadbeef") is False
 
 
+def test_parse_github_token_response_supports_form_encoded_payload():
+	from api.routers import connectors as connectors_router
+
+	class _FormOnlyResponse:
+		text = "access_token=gho_test_token&scope=repo&token_type=bearer"
+
+		def json(self):
+			raise ValueError("not-json")
+
+	token_data = connectors_router._parse_github_token_response(_FormOnlyResponse())
+
+	assert token_data["access_token"] == "gho_test_token"
+	assert token_data["scope"] == "repo"
+	assert token_data["token_type"] == "bearer"
+
+
+def test_build_github_token_exchange_error_detail_uses_message_field():
+	from api.routers import connectors as connectors_router
+
+	detail = connectors_router._build_github_token_exchange_error_detail(
+		{"message": "The code passed is incorrect or expired."}
+	)
+
+	assert detail == "GitHub token exchange failed: The code passed is incorrect or expired."
+
+
+def test_build_github_token_exchange_error_detail_returns_none_without_known_fields():
+	from api.routers import connectors as connectors_router
+
+	detail = connectors_router._build_github_token_exchange_error_detail({"foo": "bar"})
+
+	assert detail is None
+
+
 def test_github_webhook_ping_returns_ok(monkeypatch):
 	from api.routers import connectors as connectors_router
 
