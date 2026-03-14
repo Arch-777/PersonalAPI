@@ -70,6 +70,16 @@ GITHUB_CONNECT_SCOPES = "read:user user:email repo"
 GITHUB_WEBHOOK_EVENTS = {"push", "pull_request", "issues", "repository", "release", "create", "delete"}
 
 
+def _broadcast_connector_event(user_id: str, event: str, data: dict[str, object]) -> None:
+    """Best-effort websocket broadcast for connector state changes."""
+    try:
+        from api.routers.ws import broadcast_sync_event
+
+        broadcast_sync_event(user_id, event, data)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _parse_github_token_response(token_response: object) -> dict[str, object]:
     token_data: dict[str, object] = {}
 
@@ -1476,6 +1486,15 @@ def set_connector_auto_sync(
         connector.metadata_json = metadata
 
     db.commit()
+
+    _broadcast_connector_event(
+        str(current_user.id),
+        "connector.auto_sync.updated",
+        {
+            "platforms": sorted([connector.platform for connector in connectors]),
+            "auto_sync_enabled": body.enabled,
+        },
+    )
 
     return ConnectorAutoSyncResponse(
         platforms=sorted([connector.platform for connector in connectors]),

@@ -836,6 +836,26 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Optional: add a UI toggle in Integrations page to let users choose between disconnect-only and disconnect+delete-data.
 
+## Step 53 - Auto-Sync State WebSocket Emission
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Added best-effort connector event broadcaster helper.
+    - `PATCH /v1/connectors/{platform}/auto-sync` now emits websocket event `connector.auto_sync.updated` after DB commit.
+    - Event payload includes:
+      - `platforms`
+      - `auto_sync_enabled`
+  - backend/tests/test_api.py:
+    - Added regression test verifying auto-sync update route emits the websocket event.
+  - frontend/app/dashboard/integrations/page.tsx:
+    - Added websocket event handling for `connector.auto_sync.updated`.
+    - Refreshes connector query state and shows a toast so other open sessions/tabs stay in sync.
+- Verification:
+  - Targeted backend tests passed: `py -3 -m pytest tests/test_api.py -k auto_sync -q` -> 4 passed.
+- Next:
+  - Optional: centralize connector websocket event types/constants if more connector-state events are added.
+
 ## Step 49 - RAG Smart Message Replies + Slack Intent Routing Fix
 - Status: Completed
 - Date: 2026-03-14

@@ -1145,6 +1145,40 @@ def test_set_connector_auto_sync_cascades_google_platforms_by_default():
 	assert all(c.metadata_json.get("auto_sync_enabled") is True for c in connectors)
 
 
+def test_set_connector_auto_sync_broadcasts_websocket_event(monkeypatch):
+	from api.routers import connectors as connectors_router
+
+	user_id = uuid.uuid4()
+	connector = _make_connector("spotify", user_id)
+	connector.metadata_json = {}
+	fake_db = _FakeAutoSyncToggleDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+	broadcast_calls: list[tuple[str, str, dict[str, object]]] = []
+
+	monkeypatch.setattr(
+		connectors_router,
+		"_broadcast_connector_event",
+		lambda user_id, event, data: broadcast_calls.append((user_id, event, data)),
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.patch("/v1/connectors/spotify/auto-sync", json={"enabled": False})
+
+	assert response.status_code == 200
+	assert broadcast_calls == [
+		(
+			str(user_id),
+			"connector.auto_sync.updated",
+			{"platforms": ["spotify"], "auto_sync_enabled": False},
+		)
+	]
+
+	app.dependency_overrides.clear()
+
+
 def test_set_connector_auto_sync_rejects_cascade_google_for_non_google_platform():
 	user_id = uuid.uuid4()
 	connector = _make_connector("spotify", user_id)
