@@ -98,13 +98,17 @@ def _build_chat_message(session_id: uuid.UUID, role: str, content: str, created_
 
 
 class _FakeChatHistoryDb:
-	def __init__(self, session_row, message_rows: list[SimpleNamespace]):
+	def __init__(self, session_row, message_rows: list[SimpleNamespace], latest_session_row: SimpleNamespace | None = None):
 		self.session_row = session_row
+		self.latest_session_row = latest_session_row
 		self.message_rows = message_rows
 		self.message_stmt = None
 
 	def execute(self, stmt):
 		stmt_str = str(stmt)
+		if "FROM chat_sessions" in stmt_str and "ORDER BY chat_sessions.updated_at DESC" in stmt_str:
+			return _FakeResult(one=self.latest_session_row)
+
 		if "FROM chat_sessions" in stmt_str:
 			return _FakeResult(one=self.session_row)
 
@@ -296,6 +300,48 @@ def test_chat_history_supports_content_query_filter():
 	assert [message["content"] for message in body] == ["Show me the project plan", "Find the latest plan notes"]
 	assert "LIKE" in str(fake_db.message_stmt).upper()
 	assert "%plan%" in fake_db.message_stmt.compile().params.values()
+
+	app.dependency_overrides.clear()
+
+
+def test_chat_history_without_session_id_uses_latest_session():
+	user_id = uuid.uuid4()
+	latest_session_id = uuid.uuid4()
+	now = datetime.now(UTC)
+	fake_db = _FakeChatHistoryDb(
+		session_row=None,
+		latest_session_row=SimpleNamespace(id=latest_session_id, user_id=user_id),
+		message_rows=[
+			_build_chat_message(latest_session_id, "assistant", "Most recent answer", now - timedelta(minutes=1)),
+			_build_chat_message(latest_session_id, "user", "Earlier question", now - timedelta(minutes=2)),
+		],
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+
+	client = TestClient(app)
+	response = client.get("/v1/chat/history?limit=1&order=desc")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert [message["content"] for message in body] == ["Most recent answer"]
+
+	app.dependency_overrides.clear()
+
+
+def test_chat_history_without_session_id_returns_empty_when_no_sessions_exist():
+	user_id = uuid.uuid4()
+	fake_db = _FakeChatHistoryDb(session_row=None, latest_session_row=None, message_rows=[])
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+
+	client = TestClient(app)
+	response = client.get("/v1/chat/history?limit=20&order=desc")
+
+	assert response.status_code == 200
+	assert response.json() == []
 
 	app.dependency_overrides.clear()
 

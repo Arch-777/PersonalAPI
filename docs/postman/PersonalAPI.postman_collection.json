@@ -996,6 +996,43 @@
               }
             }
           ]
+        },
+        {
+          "name": "Get Recent History (No Session ID)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/chat/history?limit=20&order=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "chat", "history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "order",
+                  "value": "desc"
+                }
+              ]
+            },
+            "description": "Returns messages from the latest chat session for the authenticated user without requiring a session id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Recent no-session history response is array', function () { pm.expect(body).to.be.an('array'); });",
+                  "pm.test('Recent no-session history length respects limit', function () { pm.expect(body.length).to.be.at.most(20); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

@@ -1337,3 +1337,17 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - README content aligned against current backend routes, worker queues, docker-compose services, env template, and repository git authorship.
 - Next:
   - Keep the README updated when APIs, worker queues, deployment topology, or contributor roster change.
+
+## Step 50 - Postman No-Session Chat History Request
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added `Chat -> Get Recent History (No Session ID)` request.
+    - Uses `GET /v1/chat/history?limit=20&order=desc` (no `chatSessionId` variable required).
+    - Added response assertions for array shape and limit guard.
+- Verification:
+  - Collection JSON syntax validated.
+  - Command (from workspace root): `python -m json.tool docs/postman/PersonalAPI.postman_collection.json`
+- Next:
+  - Use the new no-session history request for initial dashboard loads before a `chatSessionId` is established.

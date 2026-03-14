@@ -77,31 +77,29 @@ def get_chat_history(
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> list[ChatHistoryMessage]:
-	session = db.execute(
-		select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+	session = _load_chat_session(db, current_user.id, session_id)
+	return _query_chat_history(db, session.id, limit=limit, query=query, order=order)
+
+
+@router.get("/history", response_model=list[ChatHistoryMessage])
+def get_recent_chat_history(
+	limit: int = Query(default=50, ge=1, le=200),
+	query: str | None = Query(default=None, min_length=1, max_length=200, description="Filter messages by content text."),
+	order: Literal["asc", "desc"] = Query(default="asc", description="Sort by created_at. Use desc for recent-first results."),
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+) -> list[ChatHistoryMessage]:
+	latest_session = db.execute(
+		select(ChatSession)
+		.where(ChatSession.user_id == current_user.id)
+		.order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+		.limit(1)
 	).scalar_one_or_none()
-	if session is None:
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
 
-	search_term = query.strip() if query else None
-	stmt = select(ChatMessage).where(ChatMessage.session_id == session.id)
-	if search_term:
-		stmt = stmt.where(ChatMessage.content.ilike(f"%{search_term}%"))
+	if latest_session is None:
+		return []
 
-	rows = db.execute(
-		stmt.order_by(ChatMessage.created_at.desc() if order == "desc" else ChatMessage.created_at.asc()).limit(limit)
-	).scalars().all()
-
-	return [
-		ChatHistoryMessage(
-			id=str(row.id),
-			role=row.role,
-			content=row.content,
-			sources=row.sources or [],
-			created_at=row.created_at,
-		)
-		for row in rows
-	]
+	return _query_chat_history(db, latest_session.id, limit=limit, query=query, order=order)
 
 
 def _load_or_create_session(db: Session, user_id: uuid.UUID, session_id: str | None) -> ChatSession:
@@ -123,4 +121,42 @@ def _load_or_create_session(db: Session, user_id: uuid.UUID, session_id: str | N
 	if session is None:
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
 	return session
+
+
+def _load_chat_session(db: Session, user_id: uuid.UUID, session_id: uuid.UUID) -> ChatSession:
+	session = db.execute(
+		select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
+	).scalar_one_or_none()
+	if session is None:
+		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+	return session
+
+
+def _query_chat_history(
+	db: Session,
+	session_id: uuid.UUID,
+	*,
+	limit: int,
+	query: str | None,
+	order: Literal["asc", "desc"],
+) -> list[ChatHistoryMessage]:
+	search_term = query.strip() if query else None
+	stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+	if search_term:
+		stmt = stmt.where(ChatMessage.content.ilike(f"%{search_term}%"))
+
+	rows = db.execute(
+		stmt.order_by(ChatMessage.created_at.desc() if order == "desc" else ChatMessage.created_at.asc()).limit(limit)
+	).scalars().all()
+
+	return [
+		ChatHistoryMessage(
+			id=str(row.id),
+			role=row.role,
+			content=row.content,
+			sources=row.sources or [],
+			created_at=row.created_at,
+		)
+		for row in rows
+	]
 
