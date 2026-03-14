@@ -3,14 +3,18 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
-import { useWebSocket } from "@/hooks/use-websocket";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   useConnectors,
+  useDisconnectConnector,
   useGetConnectUrl,
   useSyncConnector,
+  useToggleAutoSync,
 } from "@/hooks/use-integrations";
+import { useWebSocket } from "@/hooks/use-websocket";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect } from "react";
 import { toast } from "sonner";
@@ -32,6 +36,8 @@ function IntegrationsContent() {
   const { data: connectors, isLoading } = useConnectors();
   const getConnectUrl = useGetConnectUrl();
   const syncConnector = useSyncConnector();
+  const toggleAutoSync = useToggleAutoSync();
+  const disconnectConnector = useDisconnectConnector();
 
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -131,6 +137,24 @@ function IntegrationsContent() {
     });
   };
 
+  const handleToggleAutoSync = async (platform: string, enabled: boolean) => {
+    toast.promise(toggleAutoSync.mutateAsync({ platform, enabled }), {
+      loading: "Updating auto-sync...",
+      success: `Auto-sync ${enabled ? "enabled" : "disabled"}`,
+      error: "Failed to update auto-sync",
+    });
+  };
+
+  const handleDisconnect = async (platform: string) => {
+    if (confirm("Are you sure you want to disconnect this integration?")) {
+      toast.promise(disconnectConnector.mutateAsync({ platform }), {
+        loading: "Disconnecting...",
+        success: "Integration disconnected successfully",
+        error: "Failed to disconnect integration",
+      });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex justify-center p-12">
@@ -202,7 +226,25 @@ function IntegrationsContent() {
                     : "Not Connected"}
                 </Badge>
               </CardHeader>
+              
               <div className="flex-1" />
+              
+              {isConnected && (
+                <div className="px-5 pb-4 flex items-center justify-between mt-auto">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id={`auto-sync-${c.platform}`}
+                      checked={connector?.auto_sync_enabled || false}
+                      onCheckedChange={(checked) => handleToggleAutoSync(c.platform, checked)}
+                      disabled={toggleAutoSync.isPending && toggleAutoSync.variables?.platform === c.platform}
+                    />
+                    <Label htmlFor={`auto-sync-${c.platform}`} className="text-xs text-zinc-500 cursor-pointer">
+                      Auto-sync
+                    </Label>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2 bg-zinc-50/80 p-4 border-t border-zinc-100">
                 {!isConnected ? (
                   <Button
@@ -229,6 +271,20 @@ function IntegrationsContent() {
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       ) : null}
                       {isSyncing ? "Syncing..." : "Sync"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => handleDisconnect(c.platform)}
+                      disabled={disconnectConnector.isPending && disconnectConnector.variables?.platform === c.platform}
+                      className="h-10 w-10 shrink-0 text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100"
+                      title="Disconnect integration"
+                    >
+                      {disconnectConnector.isPending && disconnectConnector.variables?.platform === c.platform ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
                     </Button>
                   </>
                 )}

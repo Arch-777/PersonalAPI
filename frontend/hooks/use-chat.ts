@@ -32,21 +32,16 @@ export interface SendMessagePayload {
   session_id?: string | null;
 }
 
-export const useChatHistory = (sessionId: string | null | undefined, limit = 50) => {
+export const useChatHistory = (sessionId: string | null | undefined, limit = 50, order: 'asc' | 'desc' = 'asc') => {
   return useQuery({
-    queryKey: ['chat-history', sessionId, limit],
-        queryFn: async (): Promise<ChatMessage[]> => {
-      if (sessionId === null) {
-        const { data } = await apiClient.get('/v1/chat/history', { params: { limit } });
-        return data;
-      }
-      if (!sessionId) return [];
-      const { data } = await apiClient.get(`/v1/chat/${sessionId}/history`, {   
-        params: { limit },
+    queryKey: ['chat-history', sessionId || 'all', limit, order],
+    queryFn: async (): Promise<ChatMessage[]> => {
+      const url = sessionId ? `/v1/chat/${sessionId}/history` : `/v1/chat/history`;
+      const { data } = await apiClient.get(url, {
+        params: { limit, order },
       });
       return data;
     },
-    enabled: sessionId === null || !!sessionId,
   });
 };
 
