@@ -3,10 +3,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
-import { useConnectors, useGetConnectUrl, useSyncConnector } from "@/hooks/use-integrations";
+import { useWebSocket } from "@/hooks/use-websocket";
+import {
+  useConnectors,
+  useGetConnectUrl,
+  useSyncConnector,
+} from "@/hooks/use-integrations";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect } from "react";
+import { Suspense, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 
 const SUPPORTED_INTEGRATIONS = [
@@ -21,10 +27,66 @@ const SUPPORTED_INTEGRATIONS = [
 function IntegrationsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const { data: connectors, isLoading } = useConnectors();
   const getConnectUrl = useGetConnectUrl();
   const syncConnector = useSyncConnector();
+
+  const accessToken =
+    typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+
+  const handleWebSocketEvent = useCallback(
+    (payload: { event: string; data: Record<string, unknown> }) => {
+      if (payload.event === "sync.started") {
+        const platform =
+          typeof payload.data.platform === "string"
+            ? payload.data.platform
+            : "connector";
+        toast.message(`${platform} sync started`);
+        queryClient.invalidateQueries({ queryKey: ["connectors"] });
+        return;
+      }
+
+      if (payload.event === "sync.completed") {
+        const platform =
+          typeof payload.data.platform === "string"
+            ? payload.data.platform
+            : "connector";
+        const count =
+          typeof payload.data.items_upserted === "number"
+            ? payload.data.items_upserted
+            : undefined;
+        toast.success(
+          count !== undefined
+            ? `${platform} sync completed (${count} items)`
+            : `${platform} sync completed`,
+        );
+        queryClient.invalidateQueries({ queryKey: ["connectors"] });
+        return;
+      }
+
+      if (payload.event === "sync.failed") {
+        const platform =
+          typeof payload.data.platform === "string"
+            ? payload.data.platform
+            : "connector";
+        const error =
+          typeof payload.data.error === "string"
+            ? payload.data.error
+            : "Unknown error";
+        toast.error(`${platform} sync failed: ${error}`);
+        queryClient.invalidateQueries({ queryKey: ["connectors"] });
+      }
+    },
+    [queryClient],
+  );
+
+  const { status: wsStatus } = useWebSocket({
+    token: accessToken,
+    enabled: !!accessToken,
+    onEvent: handleWebSocketEvent,
+  });
 
   useEffect(() => {
     const integration = searchParams.get("integration");
@@ -84,14 +146,26 @@ function IntegrationsContent() {
           Integrations
         </h1>
         <p className="text-zinc-500 font-serif">Manage your data sources.</p>
+        <p className="text-xs text-zinc-400 font-medium">
+          Realtime status:{" "}
+          {wsStatus === "open"
+            ? "Live"
+            : wsStatus === "connecting"
+              ? "Connecting..."
+              : "Offline"}
+        </p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
         {SUPPORTED_INTEGRATIONS.map((c) => {
-          const connector = connectors?.find((conn) => conn.platform === c.platform);
-          const isConnected = !!connector && connector.status !== "disconnected";
+          const connector = connectors?.find(
+            (conn) => conn.platform === c.platform,
+          );
+          const isConnected =
+            !!connector && connector.status !== "disconnected";
           const isSyncing = connector?.status === "syncing";
-          const isConnecting = getConnectUrl.isPending && getConnectUrl.variables === c.platform;
+          const isConnecting =
+            getConnectUrl.isPending && getConnectUrl.variables === c.platform;
 
           return (
             <Card
@@ -114,8 +188,8 @@ function IntegrationsContent() {
                       ? isSyncing
                         ? "bg-blue-100 text-blue-700"
                         : connector.status === "error"
-                        ? "bg-red-100 text-red-700"
-                        : "bg-zinc-900 text-zinc-50"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-zinc-900 text-zinc-50"
                       : "bg-zinc-100 text-zinc-500"
                   }`}
                 >
@@ -123,8 +197,8 @@ function IntegrationsContent() {
                     ? isSyncing
                       ? "Syncing"
                       : connector.status === "error"
-                      ? "Error"
-                      : "Connected"
+                        ? "Error"
+                        : "Connected"
                     : "Not Connected"}
                 </Badge>
               </CardHeader>
@@ -149,7 +223,9 @@ function IntegrationsContent() {
                       disabled={isSyncing || syncConnector.isPending}
                       className="flex-1 h-10 rounded-lg font-medium transition-all duration-200 bg-white border-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-900"
                     >
-                      {isSyncing || (syncConnector.isPending && syncConnector.variables === c.platform) ? (
+                      {isSyncing ||
+                      (syncConnector.isPending &&
+                        syncConnector.variables === c.platform) ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       ) : null}
                       {isSyncing ? "Syncing..." : "Sync"}
@@ -167,7 +243,13 @@ function IntegrationsContent() {
 
 export default function IntegrationsPage() {
   return (
-    <Suspense fallback={<div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-zinc-500" /></div>}>
+    <Suspense
+      fallback={
+        <div className="flex justify-center p-12">
+          <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
+        </div>
+      }
+    >
       <IntegrationsContent />
     </Suspense>
   );
