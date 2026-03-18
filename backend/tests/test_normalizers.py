@@ -375,6 +375,11 @@ def test_persist_normalized_items_adds_connector_metadata(monkeypatch):
 		raw_record={"id": "msg-99"},
 	)
 
+	monkeypatch.setattr(
+		connector_sync,
+		"get_settings",
+		lambda: SimpleNamespace(user_data_root="storage", persist_ingested_files=True),
+	)
 	monkeypatch.setattr(connector_sync, "_store_item_file", lambda **_: "/users/u/data/gmail/email_msg-99.json")
 	rows = connector_sync._persist_normalized_items(connector, [item], source_cursor="7")
 
@@ -384,6 +389,42 @@ def test_persist_normalized_items_adds_connector_metadata(monkeypatch):
 	assert row["metadata_json"]["ingestion_mode"] == "api"
 	assert row["metadata_json"]["cursor"] == "7"
 	assert row["metadata_json"]["connector_id"] == str(connector.id)
+
+
+def test_persist_normalized_items_skips_file_writes_when_disabled(monkeypatch):
+	connector = SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4(), platform="gmail")
+	item = NormalizedItem(
+		type="email",
+		source="gmail",
+		source_id="msg-100",
+		title="Subject",
+		sender_name="Alice",
+		sender_email="alice@example.com",
+		content="Body",
+		summary="Body",
+		metadata_json={"thread_id": "th-2"},
+		item_date=None,
+		raw_record={"id": "msg-100"},
+	)
+
+	monkeypatch.setattr(
+		connector_sync,
+		"get_settings",
+		lambda: SimpleNamespace(user_data_root="storage", persist_ingested_files=False),
+	)
+
+	def _raise_if_called(**_kwargs):
+		raise AssertionError("_store_item_file should not be called when persist_ingested_files=false")
+
+	monkeypatch.setattr(connector_sync, "_store_item_file", _raise_if_called)
+
+	rows = connector_sync._persist_normalized_items(connector, [item], source_cursor="8")
+
+	assert len(rows) == 1
+	row = rows[0]
+	assert row["file_path"] is None
+	assert row["metadata_json"]["file_path"] is None
+	assert row["metadata_json"]["file_persistence"] == "disabled"
 
 
 def test_extract_notion_plain_text_joins_rich_text_lines():

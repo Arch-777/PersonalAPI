@@ -519,6 +519,53 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Redeploy workers and API so new exception flow is active.
   - Reconnect Google Drive/GCal with the matching platform OAuth flow and retry sync.
 
+## Step 47 - MCP JSON-RPC Compatibility Baseline for External AI Clients
+- Status: Completed
+- Date: 2026-03-18
+- Changes:
+  - backend/mcp/server.py:
+    - Added MCP-style JSON-RPC endpoint aliases:
+      - `POST /mcp/rpc`
+      - `POST /mcp/` (root alias)
+    - Implemented JSON-RPC methods:
+      - `initialize`
+      - `ping`
+      - `tools/list`
+      - `tools/call`
+    - Added MCP manifest endpoint: `GET /mcp/manifest`.
+    - Upgraded tool metadata to machine-readable JSON Schema for MCP client interoperability.
+    - Added dual auth header support for agent clients:
+      - `X-API-Key`
+      - `Authorization: Bearer <developer_key>`
+    - Kept existing tool routes and unified endpoint for backward compatibility:
+      - `/mcp/tools/*`
+      - `/mcp/endpoint`
+  - backend/tests/test_mcp.py:
+    - Added focused MCP tests covering:
+      - Health endpoint
+      - JSON-RPC initialize
+      - tools/list discovery
+      - tools/call with Bearer API key
+      - SSE message endpoint behavior (`/message`) and manifest transport coverage
+  - README.md:
+    - Added MCP transport and usage docs with JSON-RPC method list and curl examples.
+  - backend/mcp/server.py (SSE extension):
+    - Added SSE transport endpoint: `GET /mcp/sse`.
+    - Added SSE message endpoints:
+      - `POST /mcp/message?session_id=...`
+      - `POST /mcp/sse/message?session_id=...`
+    - Added stream `endpoint` bootstrap event with per-session message URL.
+    - Added shared JSON-RPC handler used by both HTTP JSON-RPC (`/rpc`) and SSE message posting.
+    - Updated MCP manifest to advertise both transports (`http-jsonrpc`, `sse`).
+  - README.md (SSE extension):
+    - Added SSE transport flow and endpoint usage notes for stream-oriented MCP clients.
+- Verification:
+  - MCP test suite passed: `7 passed in 0.96s`.
+  - Command used: `py -3 -m pytest tests/test_mcp.py -q` (from `backend/`).
+  - Editor diagnostics check: no errors in modified files.
+- Next:
+  - Add integration tests for live `tools/call` execution against a seeded test database.
+
 ## Step 48 - Scalability Foundation: RLS, HNSW, Rate Limits, and Pool Tuning
 - Status: Completed
 - Date: 2026-03-17
@@ -1430,6 +1477,29 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Optional: wire `tests/test_rag_quality_gate.py` into CI required checks for merge blocking.
   - Optional: define and track explicit KPI targets (e.g., relevance@3, abstain precision, citation validity) over time.
+
+## Step 64 - Production Toggle: DB-Only Ingestion (Disable Disk Snapshots)
+- Status: Completed
+- Date: 2026-03-18
+- Changes:
+  - backend/api/core/config.py:
+    - Added `persist_ingested_files` setting (`PERSIST_INGESTED_FILES`, default `true`).
+  - backend/workers/connector_sync.py:
+    - Updated `_persist_normalized_items(...)` to conditionally skip `_store_item_file(...)` when file persistence is disabled.
+    - `file_path` is now stored as `None` when disabled.
+    - Added metadata marker `file_persistence` with values `enabled|disabled`.
+  - backend/tests/test_normalizers.py:
+    - Updated existing metadata test to explicitly enable file persistence under the new config.
+    - Added regression test proving disk write is skipped when `persist_ingested_files=false`.
+  - backend/.env and backend/.env.example:
+    - Added `PERSIST_INGESTED_FILES=false` to run DB-only ingestion mode.
+- Verification:
+  - Focused persistence tests passed:
+    - `py -3 -m pytest tests/test_normalizers.py -k "persist_normalized_items or store_item_file" -q`
+    - Result: `3 passed, 15 deselected`.
+- Next:
+  - Optional: add startup log line indicating active ingestion persistence mode (`enabled` vs `disabled`) for clearer production observability.
+  - Optional: add a migration/cleanup job for previously written local snapshot files if disk artifacts are no longer needed.
 
 ## Integration Contract Notes for Person 2
 

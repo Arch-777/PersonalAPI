@@ -909,9 +909,15 @@ def _persist_normalized_items(
     normalized_items: list[NormalizedItem],
     source_cursor: str | None,
 ) -> list[dict[str, Any]]:
+    settings = get_settings()
+    persist_files = bool(settings.persist_ingested_files)
     rows: list[dict[str, Any]] = []
     for item in normalized_items:
-        file_path = _store_item_file(user_id=connector.user_id, platform=connector.platform, item=item)
+        file_path = (
+            _store_item_file(user_id=connector.user_id, platform=connector.platform, item=item)
+            if persist_files
+            else None
+        )
         metadata = dict(item.metadata_json)
         metadata.update(
             {
@@ -919,6 +925,7 @@ def _persist_normalized_items(
                 "cursor": source_cursor,
                 "ingestion_mode": "api",
                 "file_path": file_path,
+                "file_persistence": "enabled" if persist_files else "disabled",
             }
         )
         rows.append(

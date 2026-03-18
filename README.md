@@ -427,6 +427,64 @@ Full interactive docs available at `/docs` (Swagger) and `/redoc`.
 GET  /health
 GET  /health/llm
 GET  /mcp/health
+GET  /mcp/manifest
+```
+
+### MCP (JSON-RPC)
+
+PersonalAPI now exposes a JSON-RPC MCP-compatible endpoint for external AI clients.
+
+```text
+POST /mcp/rpc
+POST /mcp/        # root alias
+```
+
+Auth header (either one):
+
+```text
+X-API-Key: pk_live_...
+Authorization: Bearer pk_live_...
+```
+
+Supported MCP methods:
+
+```text
+initialize
+ping
+tools/list
+tools/call
+```
+
+SSE transport (for stream-oriented MCP clients):
+
+```text
+GET  /mcp/sse
+POST /mcp/message?session_id=<session_id>
+POST /mcp/sse/message?session_id=<session_id>
+```
+
+SSE flow:
+
+1. Open `GET /mcp/sse` and read the first `endpoint` event.
+2. Extract `session_id` from the event payload.
+3. Send JSON-RPC payloads to `/mcp/message?session_id=<session_id>`.
+4. Read `message` events on the SSE stream for JSON-RPC responses.
+
+Example: list tools
+
+```bash
+curl -X POST http://127.0.0.1:8000/mcp/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+Example: call search tool
+
+```bash
+curl -X POST http://127.0.0.1:8000/mcp/rpc \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer pk_live_your_key" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"project roadmap","top_k":5}}}'
 ```
 
 ### Authentication

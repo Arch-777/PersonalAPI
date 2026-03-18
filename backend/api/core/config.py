@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 	cors_origins: str = Field(default="http://localhost:3000")
 	frontend_app_url: str = Field(default="http://127.0.0.1:3000")
 	user_data_root: str = Field(default="storage")
+	persist_ingested_files: bool = Field(default=True)
 
 	database_url: str = Field(default="postgresql+psycopg://postgres:localpass@localhost:5432/personalapi")
 	database_ssl_mode: str = Field(default="prefer")
