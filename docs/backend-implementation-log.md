@@ -2143,3 +2143,194 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Manual review completed to ensure consistency with docs/developer-support-plan.md and current architecture.
 - Next:
   - Break Phase 0 and Phase 1 tasks into sprint tickets and assign owners with estimates.
+
+## Step 53 - Phase 0 Contract Freeze Execution Pack (Gap + Matrices)
+- Status: Completed
+- Date: 2026-03-18
+- Changes:
+  - docs/developer-support-phase-wise-implementation-plan.md:
+    - Added Section 16 "Phase 0 Execution Pack (Initial Draft - 2026-03-18)".
+    - Added implementation-backed baseline gap analysis mapping current backend behavior to missing freeze/hardening requirements.
+    - Added explicit Phase 0 signoff checklist table with owners, artifacts, and status fields.
+    - Added v1 endpoint catalog freeze candidate (included vs deferred).
+    - Added endpoint scope matrix proposal for API key authorization.
+    - Added Free/Paid quota matrix proposal with reset policy.
+    - Added pagination/filter/sort contract defaults.
+    - Added idempotency policy draft for mutating endpoints.
+    - Added standard error envelope and initial error code taxonomy.
+    - Added versioning/deprecation response header policy draft.
+    - Added launch scorecard thresholds and a 10-day immediate work queue to close top gaps.
+- Verification:
+  - Manual document review completed for internal consistency with docs/developer-support-plan.md and current router/model/middleware implementation.
+- Next:
+  - Confirm scope names and quota values with product/security stakeholders.
+  - Convert Section 16.11 work queue items into engineering tickets for Phase 1 execution.
+## Step 54 - API Foundation Hardening: Request IDs + Unified Error Envelope
+- Status: Completed
+- Date: 2026-03-19
+- Changes:
+  - backend/api/main.py:
+    - Added request ID generation and propagation middleware with inbound passthrough for X-Request-ID.
+    - Added consistent response headers on all responses:
+      - X-Request-ID
+      - X-API-Version
+    - Kept inbound API key rate limiting in middleware and standardized 429 responses with error envelope and retry_after_seconds.
+    - Added standardized error envelope helpers and status-code to error-code mapping.
+    - Added global HTTPException handler to return normalized error payloads while preserving existing detail text for compatibility.
+    - Updated validation, SQLAlchemy, and fallback exception handlers to return the normalized error envelope.
+  - backend/tests/test_api.py:
+    - Added coverage for X-Request-ID and X-API-Version presence on health responses.
+    - Added coverage for request ID passthrough when client provides X-Request-ID.
+    - Added coverage for HTTP exception envelope shape on unauthorized /auth/me requests.
+- Verification:
+  - Targeted regression suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_auth_google.py tests/test_mcp.py -k "not github_callback_redirects_to_frontend_on_success" -q
+    - Result: 50 passed, 1 deselected.
+  - Full targeted run including deselected test confirms one known unrelated failure remains in GitHub callback redirect state test.
+- Next:
+  - Implement API key scope model and route-level scope enforcement matrix checks.
+  - Implement tier-aware quota counters with atomic decrement and response quota headers.
+
+## Step 55 - API Key Scopes + MCP Scope Enforcement
+- Status: Completed
+- Date: 2026-03-19
+- Changes:
+  - backend/api/core/security.py:
+    - Added reusable scope helpers:
+      - normalize_scopes
+      - has_required_scope
+      - ensure_required_scope
+    - Kept rollout-safe behavior for legacy keys: empty scopes are treated as full-access until key migration/rotation.
+  - backend/api/models/api_key.py:
+    - Added `scopes` array column mapping to API key ORM model.
+  - backend/api/routers/developer.py:
+    - Added `scopes` support to API key create request and create/list/revoke responses.
+    - Added normalization on create and safe fallback handling for legacy objects without a scopes attribute.
+  - backend/migrations/004_api_key_scopes.sql:
+    - Added migration to create `api_keys.scopes` column with default empty array.
+    - Added GIN index for scope lookup/query efficiency.
+  - backend/mcp/server.py:
+    - Extended `_resolve_user` with optional `required_scope` enforcement.
+    - Added scope checks on MCP tools:
+      - search, ask, get_item -> data.read
+      - list_connectors -> connectors.read
+      - get_profile -> profile.read
+    - Hardened DB session lifecycle to close session when scope validation fails.
+  - backend/tests/test_api.py:
+    - Added test for API key scope normalization at create time.
+    - Added MCP scope denial test (403 on missing required scope).
+    - Added MCP scope allow test for matching scope.
+- Verification:
+  - Focused scope suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_mcp.py -k "developer_create_api_key_normalizes_scopes or mcp_resolve_user or mcp_rpc or mcp_sse_message" -q
+    - Result: 9 passed.
+  - Broader targeted regression suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_auth_google.py tests/test_mcp.py -k "not github_callback_redirects_to_frontend_on_success" -q
+    - Result: 53 passed, 1 deselected.
+- Next:
+  - Implement API key plan tier + monthly quota counters and atomic quota decrement path.
+  - Attach quota headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) on API key requests.
+
+## Step 56 - Plan Tiers + Monthly Quota Enforcement (API Keys)
+- Status: Completed
+- Date: 2026-03-19
+- Changes:
+  - backend/api/core/api_plans.py:
+    - Added canonical plan tier model and defaults for requested tiers:
+      - free
+      - personal_pro
+      - developer
+      - team
+      - enterprise
+    - Added pricing and margin metadata per tier from product plan (price, variable cost, gross margin).
+    - Added per-tier monthly quota and RPM defaults for runtime enforcement.
+  - backend/api/models/api_key.py:
+    - Added API key fields for tier and quota lifecycle:
+      - plan_tier
+      - monthly_quota
+      - quota_used
+      - quota_window_start
+      - quota_window_end
+  - backend/migrations/005_api_key_plan_and_quota.sql:
+    - Added migration to create the new plan/quota columns with safe defaults/backfill and indexes.
+  - backend/api/routers/developer.py:
+    - Added `plan_tier` to API key create request with validation against supported tiers.
+    - API key create/list/revoke responses now include plan and quota state fields.
+    - API key creation now initializes tier-derived monthly quota and current month quota window.
+  - backend/api/core/api_key_quota.py:
+    - Added DB-backed monthly quota consumption helper with row lock (`SELECT ... FOR UPDATE`) for atomic updates.
+    - Enforced API key validity checks in quota path (invalid/revoked/expired).
+  - backend/api/main.py:
+    - Added monthly quota enforcement in request middleware for `X-API-Key` traffic.
+    - Added quota headers on API key responses:
+      - X-RateLimit-Limit
+      - X-RateLimit-Remaining
+      - X-RateLimit-Reset
+    - Added explicit `QUOTA_EXCEEDED` response behavior for over-quota requests.
+    - Added fail-open handling for transient quota backend errors to preserve availability.
+- Verification:
+  - Broader targeted regression suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_auth_google.py tests/test_mcp.py -k "not github_callback_redirects_to_frontend_on_success" -q
+    - Result: 56 passed, 1 deselected.
+- Next:
+  - Apply migrations `004_api_key_scopes.sql` and `005_api_key_plan_and_quota.sql` to all environments.
+  - Add route-level scope enforcement beyond MCP (search/connectors/developer routes for API-key traffic).
+
+## Step 57 - Tier-Specific RPM Enforcement (Plan-Aware Inbound Throttling)
+- Status: Completed
+- Date: 2026-03-19
+- Changes:
+  - backend/api/core/api_key_quota.py:
+    - Added `ApiKeyPolicyResult` and `resolve_api_key_policy()` to resolve plan-derived runtime policy from API key metadata.
+    - Enforced key validity checks during policy resolution (invalid/revoked/expired).
+  - backend/api/core/rate_limit.py:
+    - Extended inbound rate-limit function to accept optional per-key `requests_per_minute` override.
+    - Preserved existing global fallback behavior when no override is provided.
+  - backend/api/main.py:
+    - Added policy resolution before inbound throttling so each API key uses tier-specific RPM.
+    - Added explicit 401 handling for invalid/revoked/expired API keys in middleware path.
+    - Kept safe fallback to global RPM when policy resolution backend fails unexpectedly.
+  - backend/tests/test_api.py:
+    - Added middleware tests to verify:
+      - tier-specific RPM value is passed to rate-limiter.
+      - invalid API key policy resolution returns deterministic 401 envelope.
+      - existing quota header and quota exceeded tests remain green with policy resolution in place.
+- Verification:
+  - Focused middleware suite passed:
+    - py -3 -m pytest tests/test_api.py -k "tier_specific_rpm or invalid_policy_returns_401 or quota_headers or quota_exceeded or plan_tier_sets_quota_defaults" -q
+    - Result: 5 passed.
+  - Broader targeted regression suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_auth_google.py tests/test_mcp.py -k "not github_callback_redirects_to_frontend_on_success" -q
+    - Result: 58 passed, 1 deselected.
+- Next:
+  - Apply migrations `004_api_key_scopes.sql` and `005_api_key_plan_and_quota.sql` in all environments.
+  - Implement API-key scope enforcement outside MCP for future API-key-protected REST surfaces.
+
+## Step 58 - REST API-Key Auth + Data Scope Enforcement
+- Status: Completed
+- Date: 2026-03-19
+- Changes:
+  - backend/api/core/auth.py:
+    - Extended shared auth dependency to support either:
+      - Authorization: Bearer <jwt>
+      - X-API-Key: <developer_key>
+    - Added API-key resolution helpers in auth path.
+    - Added REST route scope mapping for API-key requests:
+      - /v1/search/* -> data.read
+      - /v1/emails/* -> data.read
+      - /v1/documents/* -> data.read
+    - Added deterministic API-key auth errors for invalid/expired keys and scope denial.
+  - backend/tests/test_api.py:
+    - Added tests verifying API-key access to REST search route when scope is satisfied.
+    - Added tests verifying scope-denied behavior for REST search route with missing data.read scope.
+    - Updated fake DB result helper with `.all()` to support search query row mocking.
+- Verification:
+  - Focused REST API-key auth tests passed:
+    - py -3 -m pytest tests/test_api.py -k "search_allows_x_api_key_when_scope_is_satisfied or search_rejects_x_api_key_when_scope_is_missing" -q
+    - Result: 2 passed.
+  - Broader targeted regression suite passed:
+    - py -3 -m pytest tests/test_api.py tests/test_auth_google.py tests/test_mcp.py -k "not github_callback_redirects_to_frontend_on_success" -q
+    - Result: 60 passed, 1 deselected.
+- Next:
+  - Apply migrations `004_api_key_scopes.sql` and `005_api_key_plan_and_quota.sql` in all environments.
+  - Expand API-key scope mapping for additional REST surfaces when those endpoints are opened for API-key auth.

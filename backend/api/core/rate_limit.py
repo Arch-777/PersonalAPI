@@ -58,7 +58,7 @@ def _sliding_window_allow(key: str, limit: int, window_seconds: int) -> tuple[bo
     return False, max(1, retry_after_seconds)
 
 
-def check_inbound_api_key_limit(raw_api_key: str) -> tuple[bool, int]:
+def check_inbound_api_key_limit(raw_api_key: str, requests_per_minute: int | None = None) -> tuple[bool, int]:
     """Apply inbound request limits keyed by API key hash."""
     settings = get_settings()
     if not settings.api_rate_limit_enabled:
@@ -68,10 +68,11 @@ def check_inbound_api_key_limit(raw_api_key: str) -> tuple[bool, int]:
 
     key_hash = hashlib.sha256(raw_api_key.encode("utf-8")).hexdigest()
     redis_key = f"{settings.api_rate_limit_namespace}:{key_hash}"
+    effective_limit = int(requests_per_minute) if requests_per_minute and requests_per_minute > 0 else settings.api_rate_limit_requests
     try:
         return _sliding_window_allow(
             key=redis_key,
-            limit=settings.api_rate_limit_requests,
+            limit=effective_limit,
             window_seconds=settings.api_rate_limit_window_seconds,
         )
     except RedisError:

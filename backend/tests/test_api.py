@@ -27,6 +27,9 @@ class _FakeResult:
 		self._rows = rows or []
 		self._one = one
 
+	def all(self):
+		return self._rows
+
 	def scalars(self):
 		return _FakeScalarResult(self._rows)
 
@@ -136,6 +139,28 @@ def test_health_endpoint_returns_ok():
 
 	assert response.status_code == 200
 	assert response.json() == {"status": "ok"}
+	assert response.headers["x-request-id"].startswith("req_")
+	assert response.headers["x-api-version"] == "v1"
+
+
+def test_request_id_header_is_propagated_when_provided():
+	client = TestClient(app)
+	response = client.get("/health", headers={"X-Request-ID": "req_test_client_123"})
+
+	assert response.status_code == 200
+	assert response.headers["x-request-id"] == "req_test_client_123"
+
+
+def test_http_exception_uses_standardized_error_envelope():
+	client = TestClient(app)
+	response = client.get("/auth/me", headers={"X-Request-ID": "req_missing_auth_001"})
+
+	assert response.status_code == 401
+	payload = response.json()
+	assert payload["detail"] == "Missing credentials"
+	assert payload["error"]["code"] == "AUTH_INVALID_TOKEN"
+	assert payload["error"]["message"] == "Missing credentials"
+	assert payload["error"]["request_id"] == "req_missing_auth_001"
 
 
 def test_llm_health_endpoint_returns_disabled_when_llm_is_off(monkeypatch):
@@ -227,6 +252,27 @@ def test_emails_endpoint_returns_paginated_items():
 
 	app.dependency_overrides.clear()
 
+def test_developer_create_api_key_with_plan_tier_sets_quota_defaults():
+	fake_db = FakeDb()
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = _override_user
+
+	client = TestClient(app)
+	create_resp = client.post(
+		"/v1/developer/api-keys",
+		json={
+			"name": "dev tier key",
+			"plan_tier": "developer",
+		},
+	)
+	assert create_resp.status_code == 201
+	body = create_resp.json()
+	assert body["plan_tier"] == "developer"
+	assert body["monthly_quota"] == 250000
+	assert body["quota_used"] == 0
+
+	app.dependency_overrides.clear()
 
 def test_documents_endpoint_returns_paginated_items():
 	fake_db = FakeDb()
@@ -272,6 +318,154 @@ def test_chat_history_supports_recent_first_ordering():
 	assert [message["content"] for message in body] == ["Newest follow-up", "Middle answer"]
 	assert " DESC" in str(fake_db.message_stmt).upper()
 
+	app.dependency_overrides.clear()
+
+
+def test_api_key_request_includes_quota_headers(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=600))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=250000, remaining=249999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	client = TestClient(app)
+	response = client.get("/health", headers={"X-API-Key": "pk_live_test_quota"})
+
+	assert response.status_code == 200
+	assert response.headers["x-ratelimit-limit"] == "250000"
+	assert response.headers["x-ratelimit-remaining"] == "249999"
+	assert response.headers["x-ratelimit-reset"].isdigit()
+
+
+def test_api_key_request_returns_quota_exceeded(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=60))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=5000, remaining=0, reset_at=datetime.now(UTC) + timedelta(hours=1), consumed=False),
+	)
+
+	client = TestClient(app)
+	response = client.get("/health", headers={"X-API-Key": "pk_live_test_quota"})
+
+	assert response.status_code == 429
+	payload = response.json()
+	assert payload["error"]["code"] == "QUOTA_EXCEEDED"
+	assert response.headers["x-ratelimit-limit"] == "5000"
+	assert response.headers["x-ratelimit-remaining"] == "0"
+
+
+def test_api_key_rate_limit_uses_tier_specific_rpm(monkeypatch):
+	from api import main as api_main
+
+	captured_rpm: dict[str, int | None] = {"value": None}
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=600))
+
+	def _capture_limit(_key: str, requests_per_minute: int | None = None):
+		captured_rpm["value"] = requests_per_minute
+		return True, 0
+
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", _capture_limit)
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=250000, remaining=249998, reset_at=datetime.now(UTC) + timedelta(days=7), consumed=True),
+	)
+
+	client = TestClient(app)
+	response = client.get("/health", headers={"X-API-Key": "pk_live_tiered_limit"})
+
+	assert response.status_code == 200
+	assert captured_rpm["value"] == 600
+
+
+def test_api_key_invalid_policy_returns_401(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(
+		api_main,
+		"resolve_api_key_policy",
+		lambda _key: (_ for _ in ()).throw(HTTPException(status_code=401, detail="Invalid API key")),
+	)
+
+	client = TestClient(app)
+	response = client.get("/health", headers={"X-API-Key": "pk_live_invalid"})
+
+	assert response.status_code == 401
+	payload = response.json()
+	assert payload["detail"] == "Invalid API key"
+	assert payload["error"]["code"] == "AUTH_INVALID_TOKEN"
+
+
+def test_search_allows_x_api_key_when_scope_is_satisfied(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+
+	fake_db = FakeDb()
+	fake_db.next_rows = []
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=600))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=250000, remaining=249999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_scoped"
+		assert required_scope == "data.read"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/search/?q=project", headers={"X-API-Key": "pk_live_scoped"})
+
+	assert response.status_code == 200
+	assert response.json()["query"] == "project"
+	app.dependency_overrides.clear()
+
+
+def test_search_rejects_x_api_key_when_scope_is_missing(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+
+	fake_db = FakeDb()
+	fake_db.next_rows = []
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=60))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=5000, remaining=4999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	def _deny_scope(_raw_api_key: str, _db, required_scope: str | None):
+		assert required_scope == "data.read"
+		raise HTTPException(status_code=403, detail="API key missing required scope: data.read")
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _deny_scope)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/search/?q=project", headers={"X-API-Key": "pk_live_limited"})
+
+	assert response.status_code == 403
+	payload = response.json()
+	assert payload["error"]["code"] == "AUTH_SCOPE_DENIED"
+	assert "required scope" in payload["detail"]
 	app.dependency_overrides.clear()
 
 
@@ -402,6 +596,27 @@ def test_developer_create_api_key_with_expires_in_days_sets_expires_at():
 	app.dependency_overrides.clear()
 
 
+def test_developer_create_api_key_normalizes_scopes():
+	fake_db = FakeDb()
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = _override_user
+
+	client = TestClient(app)
+	create_resp = client.post(
+		"/v1/developer/api-keys",
+		json={
+			"name": "scoped key",
+			"scopes": [" Data.Read ", "connectors.read", "data.read", ""],
+		},
+	)
+	assert create_resp.status_code == 201
+	body = create_resp.json()
+	assert body["scopes"] == ["data.read", "connectors.read"]
+
+	app.dependency_overrides.clear()
+
+
 def test_mcp_resolve_user_rejects_expired_api_key(monkeypatch):
 	from mcp import server as mcp_server
 
@@ -442,6 +657,89 @@ def test_mcp_resolve_user_rejects_expired_api_key(monkeypatch):
 	assert exc.value.status_code == 401
 	assert fake_db.committed is False
 	assert fake_db.closed is True
+
+
+def test_mcp_resolve_user_rejects_missing_required_scope(monkeypatch):
+	from mcp import server as mcp_server
+
+	class _FakeMcpResult:
+		def __init__(self, one=None):
+			self._one = one
+
+		def scalar_one_or_none(self):
+			return self._one
+
+	class _FakeMcpDb:
+		def __init__(self, row):
+			self.row = row
+			self.committed = False
+			self.closed = False
+
+		def execute(self, _stmt):
+			return _FakeMcpResult(one=self.row)
+
+		def commit(self):
+			self.committed = True
+
+		def close(self):
+			self.closed = True
+
+	row = SimpleNamespace(
+		user_id=uuid.uuid4(),
+		revoked_at=None,
+		expires_at=datetime.now(UTC) + timedelta(minutes=30),
+		scopes=["connectors.read"],
+		last_used_at=None,
+	)
+	fake_db = _FakeMcpDb(row=row)
+	monkeypatch.setattr(mcp_server, "SessionLocal", lambda: fake_db)
+
+	with pytest.raises(HTTPException) as exc:
+		mcp_server._resolve_user("pk_live_scoped", required_scope="data.read")
+
+	assert exc.value.status_code == 403
+	assert fake_db.committed is False
+	assert fake_db.closed is True
+
+
+def test_mcp_resolve_user_accepts_matching_scope(monkeypatch):
+	from mcp import server as mcp_server
+
+	class _FakeMcpResult:
+		def __init__(self, one=None):
+			self._one = one
+
+		def scalar_one_or_none(self):
+			return self._one
+
+	class _FakeMcpDb:
+		def __init__(self, row):
+			self.row = row
+			self.committed = False
+
+		def execute(self, _stmt):
+			return _FakeMcpResult(one=self.row)
+
+		def commit(self):
+			self.committed = True
+
+		def close(self):
+			return None
+
+	row = SimpleNamespace(
+		user_id=uuid.uuid4(),
+		revoked_at=None,
+		expires_at=datetime.now(UTC) + timedelta(minutes=30),
+		scopes=["data.read"],
+		last_used_at=None,
+	)
+	fake_db = _FakeMcpDb(row=row)
+	monkeypatch.setattr(mcp_server, "SessionLocal", lambda: fake_db)
+
+	resolved_user_id, _ = mcp_server._resolve_user("pk_live_scoped", required_scope="data.read")
+
+	assert resolved_user_id == row.user_id
+	assert fake_db.committed is True
 
 
 def test_developer_revoke_api_key_success():

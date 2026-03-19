@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from api.core.security import ensure_required_scope
 from api.core.db import SessionLocal
 from api.models.api_key import ApiKey
 from api.models.connector import Connector
@@ -87,7 +88,7 @@ def _get_api_key(
     return _extract_api_key(x_api_key=x_api_key, authorization=authorization)
 
 
-def _resolve_user(api_key_header: str) -> tuple[uuid.UUID, Session]:
+def _resolve_user(api_key_header: str, required_scope: str | None = None) -> tuple[uuid.UUID, Session]:
     """Validate developer API key and return (user_id, db_session)."""
     raw_key = api_key_header.strip()
     if not raw_key:
@@ -115,6 +116,13 @@ def _resolve_user(api_key_header: str) -> tuple[uuid.UUID, Session]:
     if row.expires_at is not None and row.expires_at <= now:
         db.close()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expired API key")
+
+    if required_scope:
+        try:
+            ensure_required_scope(getattr(row, "scopes", []), required_scope)
+        except HTTPException:
+            db.close()
+            raise
 
     # Update last_used_at
     row.last_used_at = datetime.now(UTC)
@@ -573,7 +581,7 @@ def tool_search(
     Use this tool when an agent needs to find specific emails, documents,
     Slack messages, calendar events, or Spotify tracks.
     """
-    user_id, db = _resolve_user(api_key)
+    user_id, db = _resolve_user(api_key, required_scope="data.read")
     try:
         filters = [
             Item.user_id == user_id,
@@ -625,7 +633,7 @@ def tool_ask(
     (RAG_LLM_ENABLED=true) the answer uses the local model; otherwise it uses
     the deterministic context-assembly fallback.
     """
-    user_id, db = _resolve_user(api_key)
+    user_id, db = _resolve_user(api_key, required_scope="data.read")
     try:
         engine = RAGEngine(db=db, user_id=user_id)
         result = engine.query(query=body.question, top_k=body.top_k)
@@ -645,7 +653,7 @@ def tool_get_item(
     api_key: str = Depends(_get_api_key),
 ) -> ItemDetailResponse:
     """Retrieve the full content and metadata of a single personal data item by UUID."""
-    user_id, db = _resolve_user(api_key)
+    user_id, db = _resolve_user(api_key, required_scope="data.read")
     try:
         try:
             parsed_id = uuid.UUID(item_id)
@@ -682,7 +690,7 @@ def tool_list_connectors(
     api_key: str = Depends(_get_api_key),
 ) -> list[ConnectorStatusResponse]:
     """List all connected platforms and their sync status for the user."""
-    user_id, db = _resolve_user(api_key)
+    user_id, db = _resolve_user(api_key, required_scope="connectors.read")
     try:
         rows = db.execute(
             select(Connector)
@@ -709,7 +717,7 @@ def tool_get_profile(
     api_key: str = Depends(_get_api_key),
 ) -> UserProfileResponse:
     """Return the user's profile and a summary of their synced data."""
-    user_id, db = _resolve_user(api_key)
+    user_id, db = _resolve_user(api_key, required_scope="profile.read")
     try:
         from sqlalchemy import func
 

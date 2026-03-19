@@ -347,5 +347,193 @@ Risk 5: Beta support burden exceeds team capacity.
 1. Additional SDK language support based on adoption data.
 1. Enterprise plan controls and SLA hardening.
 
+## 16. Phase 0 Execution Pack (Initial Draft - 2026-03-18)
+
+### 16.1 Baseline Gap Analysis (Current Implementation vs Phase 0/1 Contract)
+
+Observed from current repository implementation:
+
+| Area | Current state | Gap to close before freeze complete | Priority |
+|---|---|---|---|
+| Endpoint catalog | Core auth, search, connectors, and developer key lifecycle routes exist. | Webhook subscription lifecycle endpoints and analytics summary endpoints are not present yet. | High |
+| API key metadata | API keys store name, prefix/hash, allowed_channels, agent_type, expires_at, revoked_at, last_used_at. | Tier metadata, quota counters, quota reset window, and explicit endpoint scopes are not modeled yet. | High |
+| Authorization model | JWT user auth is enforced for protected user routes. Inbound x-api-key rate-limit middleware exists. | Route-level API key scope authorization matrix enforcement is not implemented. | High |
+| Rate limiting and quotas | Redis sliding-window inbound limit keyed by api-key hash exists. | Tier-aware policy resolution and atomic monthly quota decrement/reset are missing. | High |
+| Error contract | Routes mostly return detail payloads with route-specific text. | Unified error envelope with deterministic error codes and request_id is not standardized. | High |
+| Request correlation | access_logs model has request_id column. | Request-id generation/propagation middleware and response header are missing. | High |
+| Versioning and deprecation | Global app version is set in FastAPI metadata. | Runtime response headers for API version/deprecation policy are missing. | Medium |
+| Pagination/filter/sort conventions | Offset/limit and top_k conventions exist in several endpoints. | Cross-endpoint written contract for defaults and constraints needs explicit freeze table. | Medium |
+| OpenAPI/explorer | Default FastAPI openapi/docs endpoints are available. | Public beta contract requires explicit publish path, ownership, and freshness checks. | Medium |
+| Access analytics readiness | access_logs model exists. | Request logging writes and analytics aggregate endpoints are not implemented. | High |
+
+### 16.2 Contract Freeze Checklist (Signoff Checklist)
+
+Mark each item as Done before Phase 0 exit.
+
+| Item | Owner | Artifact | Status |
+|---|---|---|---|
+| Freeze v1 endpoint catalog (included vs deferred) | Backend Lead + Product | Section 16.3 | TODO |
+| Freeze request/response schemas for each v1 endpoint | Backend Lead + Frontend Lead | docs/FRONTEND_API_REFERENCE.md | TODO |
+| Freeze pagination/filter/sort conventions and defaults | Backend Lead | Section 16.6 | TODO |
+| Freeze idempotency rules for mutating endpoints | Backend Lead + Security | Section 16.7 | TODO |
+| Freeze standard error envelope + error code taxonomy | Backend Lead | Section 16.8 | TODO |
+| Freeze API key endpoint scope matrix | Backend Lead + Security | Section 16.4 | TODO |
+| Freeze Free/Paid quota and rate-limit matrix | Backend Lead + Product | Section 16.5 | TODO |
+| Freeze versioning/deprecation response header policy | Backend Lead + DevRel | Section 16.9 | TODO |
+| Freeze launch scorecard thresholds | Platform + Security + Product | Section 16.10 | TODO |
+| Final cross-functional signoff (Backend/Frontend/Product/Security) | Product Owner | Release note in docs/developer-support-plan.md | TODO |
+
+### 16.3 v1 Endpoint Catalog (Freeze Candidate)
+
+Included in public beta v1:
+1. Auth:
+	- POST /auth/register
+	- POST /auth/login
+	- POST /auth/google
+	- GET /auth/google/connect
+	- GET /auth/google/callback
+	- GET /auth/me
+1. Data and search:
+	- GET /v1/emails/
+	- GET /v1/documents/
+	- GET /v1/search/
+1. Connectors:
+	- GET /v1/connectors/
+	- GET /v1/connectors/{platform}
+	- POST /v1/connectors/{platform}/bootstrap
+	- POST /v1/connectors/{platform}/sync
+	- PATCH /v1/connectors/{platform}/auto-sync
+	- DELETE /v1/connectors/{platform}
+	- OAuth connect/callback endpoints for github, google, notion, spotify, slack
+1. Developer keys:
+	- POST /v1/developer/api-keys
+	- GET /v1/developer/api-keys
+	- POST /v1/developer/api-keys/{api_key_id}/revoke
+
+Deferred from public beta v1 (explicitly not frozen as shipped behavior yet):
+1. Webhook subscription CRUD and delivery introspection endpoints.
+1. Usage analytics summary endpoints (request volume, latency, error slices).
+
+### 16.4 Endpoint Scope Matrix (Freeze Candidate)
+
+Proposed API key scopes for server-to-server developer usage:
+
+| Scope | Allows |
+|---|---|
+| data.read | GET /v1/emails/, GET /v1/documents/, GET /v1/search/ |
+| connectors.read | GET /v1/connectors/, GET /v1/connectors/{platform} |
+| connectors.write | POST /v1/connectors/{platform}/bootstrap, POST /v1/connectors/{platform}/sync, PATCH /v1/connectors/{platform}/auto-sync, DELETE /v1/connectors/{platform} |
+| keys.read | GET /v1/developer/api-keys |
+| keys.write | POST /v1/developer/api-keys, POST /v1/developer/api-keys/{api_key_id}/revoke |
+| webhooks.read | Reserved for Phase 2 webhook list/get endpoints |
+| webhooks.write | Reserved for Phase 2 webhook create/update/delete endpoints |
+| analytics.read | Reserved for Phase 2 analytics summary endpoints |
+
+Scope defaults by plan for beta:
+1. Free default: data.read, connectors.read, keys.read, keys.write.
+1. Paid default: data.read, connectors.read, connectors.write, keys.read, keys.write, analytics.read.
+1. Webhook scopes enabled only when webhook endpoints are released.
+
+### 16.5 Free vs Paid Quota Matrix (Freeze Candidate)
+
+| Dimension | Free | Paid |
+|---|---|---|
+| Monthly request quota | 5,000 | 250,000 |
+| Inbound API requests per minute (RPM) | 60 | 600 |
+| Connector sync trigger calls per minute | 6 | 60 |
+| Concurrent sync jobs per developer | 1 | 5 |
+| Webhook endpoints | 1 (after release) | 25 (after release) |
+| Analytics retention | 7 days | 90 days |
+| Key rotation recommendation | Every 90 days | Every 60 days |
+
+Reset policy:
+1. Monthly quota resets at 00:00 UTC on the first day of month.
+1. RPM windows are sliding 60-second windows.
+1. All limit responses must include Retry-After when blocked.
+
+### 16.6 Pagination/Filter/Sort Contract (Freeze Candidate)
+
+1. Pagination defaults:
+	- limit default 20, max 100.
+	- offset default 0.
+1. Search defaults:
+	- top_k default 10, min 1, max 50.
+1. Sorting:
+	- list endpoints default order by created_at desc unless endpoint-specific domain order is defined.
+1. Filtering:
+	- scalar filters use exact match unless query parameter docs explicitly define partial/fuzzy behavior.
+
+### 16.7 Idempotency Rules (Freeze Candidate)
+
+1. POST routes that create mutable resources (for example developer API key creation and future webhook creation) must support Idempotency-Key header.
+1. Same Idempotency-Key plus same authenticated principal plus same route payload within 24 hours must return the first successful result.
+1. Same key with a different payload must return conflict error code IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD.
+
+### 16.8 Standard Error Envelope and Code Taxonomy (Freeze Candidate)
+
+Standard envelope:
+
+```json
+{
+  "error": {
+	 "code": "RATE_LIMIT_EXCEEDED",
+	 "message": "Too many requests",
+	 "request_id": "req_01HT...",
+	 "retry_after_seconds": 18
+  }
+}
+```
+
+Initial code taxonomy:
+1. AUTH_MISSING_CREDENTIALS
+1. AUTH_INVALID_TOKEN
+1. AUTH_SCOPE_DENIED
+1. API_KEY_REVOKED
+1. API_KEY_EXPIRED
+1. RATE_LIMIT_EXCEEDED
+1. QUOTA_EXCEEDED
+1. VALIDATION_ERROR
+1. RESOURCE_NOT_FOUND
+1. CONFLICT
+1. PROVIDER_UPSTREAM_ERROR
+1. INTERNAL_ERROR
+
+### 16.9 Versioning and Deprecation Header Policy (Freeze Candidate)
+
+All v1 responses should include:
+1. X-API-Version: v1
+1. X-Request-ID: req_<id>
+
+Deprecation responses (when relevant) should include:
+1. Deprecation: true
+1. Sunset: <RFC 1123 date>
+1. Link: <deprecation doc URL>; rel="deprecation"
+
+### 16.10 Launch Scorecard Thresholds (Freeze Candidate)
+
+| Domain | Metric | Beta threshold (must be green) |
+|---|---|---|
+| Security | Scope enforcement coverage | 100% protected routes mapped to scopes |
+| Security | Revocation propagation | Revoked key denied on next request |
+| Security | Webhook signature validation | 100% pass for signed sample payload suite |
+| Reliability | API uptime | >= 99.9% rolling 30 days |
+| Reliability | Webhook success within retry window | >= 99% |
+| Performance | Read endpoint latency p95 | <= 450 ms |
+| Performance | Search latency p95 | <= 900 ms |
+| Quality | 5xx rate | < 1.0% daily |
+| DX | Time to first successful API call | <= 20 minutes median in onboarding tests |
+| Operations | Required CI checks on default branch | 100% blocking when failed |
+| Compliance | Auditability | Request id and actor linkage on all protected requests |
+
+### 16.11 Immediate Work Queue to Close Top Gaps (Next 10 Working Days)
+
+1. Implement request-id middleware and include X-Request-ID response header.
+1. Implement unified error response helper and map all routers to deterministic error codes.
+1. Extend api_keys schema/model with plan_tier, scopes, monthly_quota, quota_used, quota_window_start, quota_window_end.
+1. Add atomic quota check/decrement function and attach quota headers on responses.
+1. Add route inventory test that fails when protected endpoint lacks required scope mapping.
+1. Add analytics summary endpoints over access logs.
+1. Add webhook subscription and delivery model skeleton with signed payload helper.
+
 ---
 This document is the detailed execution companion for the high-level developer support production strategy and should be reviewed weekly during the beta runway.

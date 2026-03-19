@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from api.core.api_plans import get_plan_tier_spec, list_plan_tiers
 from api.core.auth import get_current_user
 from api.core.db import get_db
+from api.core.security import normalize_scopes
 from api.models.api_key import ApiKey
 from api.models.user import User
 
@@ -19,7 +21,9 @@ router = APIRouter(prefix="/developer", tags=["developer"])
 
 class ApiKeyCreateRequest(BaseModel):
 	name: str | None = Field(default=None, max_length=120)
+	plan_tier: str = Field(default="free")
 	allowed_channels: list[str] = Field(default_factory=list)
+	scopes: list[str] = Field(default_factory=list)
 	agent_type: str | None = Field(default=None, max_length=50)
 	expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 	expires_at: datetime | None = Field(default=None)
@@ -28,6 +32,10 @@ class ApiKeyCreateRequest(BaseModel):
 	def validate_expiry_input(self):
 		if self.expires_in_days is not None and self.expires_at is not None:
 			raise ValueError("Provide either expires_in_days or expires_at, not both")
+		self.plan_tier = self.plan_tier.strip().lower()
+		if self.plan_tier not in set(list_plan_tiers()):
+			allowed = ", ".join(list_plan_tiers())
+			raise ValueError(f"Invalid plan_tier '{self.plan_tier}'. Allowed values: {allowed}")
 		return self
 
 
@@ -36,7 +44,13 @@ class ApiKeyCreateResponse(BaseModel):
 	name: str | None
 	key_prefix: str
 	api_key: str
+	plan_tier: str
+	monthly_quota: int
+	quota_used: int
+	quota_window_start: datetime | None = None
+	quota_window_end: datetime | None = None
 	allowed_channels: list[str]
+	scopes: list[str]
 	agent_type: str | None
 	created_at: datetime
 	expires_at: datetime | None = None
@@ -46,7 +60,13 @@ class ApiKeyListItem(BaseModel):
 	id: str
 	name: str | None
 	key_prefix: str
+	plan_tier: str
+	monthly_quota: int
+	quota_used: int
+	quota_window_start: datetime | None = None
+	quota_window_end: datetime | None = None
 	allowed_channels: list[str]
+	scopes: list[str]
 	agent_type: str | None
 	created_at: datetime
 	last_used_at: datetime | None = None
@@ -81,13 +101,26 @@ def create_api_key(
 	raw_key = f"pk_live_{secrets.token_urlsafe(32)}"
 	key_prefix = raw_key[:14]
 	key_hash = _hash_api_key(raw_key)
+	normalized_scopes = normalize_scopes(payload.scopes)
+	plan_spec = get_plan_tier_spec(payload.plan_tier)
+	quota_window_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+	if now.month == 12:
+		quota_window_end = datetime(now.year + 1, 1, 1, tzinfo=UTC)
+	else:
+		quota_window_end = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
 
 	api_key = ApiKey(
 		user_id=current_user.id,
 		name=payload.name,
 		key_prefix=key_prefix,
 		key_hash=key_hash,
+		plan_tier=plan_spec.key,
+		monthly_quota=plan_spec.monthly_quota,
+		quota_used=0,
+		quota_window_start=quota_window_start,
+		quota_window_end=quota_window_end,
 		allowed_channels=payload.allowed_channels,
+		scopes=normalized_scopes,
 		agent_type=payload.agent_type,
 		expires_at=expires_at,
 	)
@@ -100,7 +133,13 @@ def create_api_key(
 		name=api_key.name,
 		key_prefix=api_key.key_prefix,
 		api_key=raw_key,
+		plan_tier=getattr(api_key, "plan_tier", "free"),
+		monthly_quota=int(getattr(api_key, "monthly_quota", 0) or 0),
+		quota_used=int(getattr(api_key, "quota_used", 0) or 0),
+		quota_window_start=getattr(api_key, "quota_window_start", None),
+		quota_window_end=getattr(api_key, "quota_window_end", None),
 		allowed_channels=api_key.allowed_channels,
+		scopes=normalize_scopes(getattr(api_key, "scopes", [])),
 		agent_type=api_key.agent_type,
 		created_at=api_key.created_at,
 		expires_at=api_key.expires_at,
@@ -123,7 +162,13 @@ def list_api_keys(
 			id=str(key.id),
 			name=key.name,
 			key_prefix=key.key_prefix,
+			plan_tier=getattr(key, "plan_tier", "free"),
+			monthly_quota=int(getattr(key, "monthly_quota", 0) or 0),
+			quota_used=int(getattr(key, "quota_used", 0) or 0),
+			quota_window_start=getattr(key, "quota_window_start", None),
+			quota_window_end=getattr(key, "quota_window_end", None),
 			allowed_channels=key.allowed_channels,
+			scopes=normalize_scopes(getattr(key, "scopes", [])),
 			agent_type=key.agent_type,
 			created_at=key.created_at,
 			last_used_at=key.last_used_at,
@@ -160,7 +205,13 @@ def revoke_api_key(
 		id=str(api_key.id),
 		name=api_key.name,
 		key_prefix=api_key.key_prefix,
+		plan_tier=getattr(api_key, "plan_tier", "free"),
+		monthly_quota=int(getattr(api_key, "monthly_quota", 0) or 0),
+		quota_used=int(getattr(api_key, "quota_used", 0) or 0),
+		quota_window_start=getattr(api_key, "quota_window_start", None),
+		quota_window_end=getattr(api_key, "quota_window_end", None),
 		allowed_channels=api_key.allowed_channels,
+		scopes=normalize_scopes(getattr(api_key, "scopes", [])),
 		agent_type=api_key.agent_type,
 		created_at=api_key.created_at,
 		last_used_at=api_key.last_used_at,

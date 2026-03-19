@@ -1,8 +1,10 @@
 import logging
+import uuid
+from datetime import UTC, datetime
 from importlib import import_module
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi import status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from api.core.db import check_database_connection
+from api.core.api_key_quota import consume_monthly_quota, resolve_api_key_policy
 from api.core.config import get_settings
 from api.core.rate_limit import check_inbound_api_key_limit
 from rag.generator import check_ollama_readiness
@@ -17,6 +20,53 @@ from rag.generator import check_ollama_readiness
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _get_request_id(request: Request) -> str:
+	request_id = getattr(request.state, "request_id", None)
+	if isinstance(request_id, str) and request_id.strip():
+		return request_id
+	return f"req_{uuid.uuid4().hex}"
+
+
+def _error_body(
+	request: Request,
+	code: str,
+	message: str,
+	*,
+	retry_after_seconds: int | None = None,
+) -> dict:
+	body = {
+		"error": {
+			"code": code,
+			"message": message,
+			"request_id": _get_request_id(request),
+		}
+	}
+	if retry_after_seconds is not None:
+		body["error"]["retry_after_seconds"] = int(retry_after_seconds)
+
+	# Keep backward-compatible detail while introducing standardized error envelope.
+	body["detail"] = message
+	return body
+
+
+def _code_for_http_status(status_code: int) -> str:
+	if status_code == status.HTTP_400_BAD_REQUEST:
+		return "BAD_REQUEST"
+	if status_code == status.HTTP_401_UNAUTHORIZED:
+		return "AUTH_INVALID_TOKEN"
+	if status_code == status.HTTP_403_FORBIDDEN:
+		return "AUTH_SCOPE_DENIED"
+	if status_code == status.HTTP_404_NOT_FOUND:
+		return "RESOURCE_NOT_FOUND"
+	if status_code == status.HTTP_409_CONFLICT:
+		return "CONFLICT"
+	if status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+		return "VALIDATION_ERROR"
+	if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+		return "RATE_LIMIT_EXCEEDED"
+	return "INTERNAL_ERROR" if status_code >= 500 else "BAD_REQUEST"
 
 
 @asynccontextmanager
@@ -52,31 +102,133 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def inbound_api_key_rate_limit(request: Request, call_next):
+async def request_context_and_rate_limit(request: Request, call_next):
+	incoming_request_id = request.headers.get("x-request-id", "").strip()
+	request.state.request_id = incoming_request_id or f"req_{uuid.uuid4().hex}"
+	quota_limit_header: str | None = None
+	quota_remaining_header: str | None = None
+	quota_reset_header: str | None = None
+
 	api_key = request.headers.get("x-api-key", "").strip()
 	if api_key:
-		allowed, retry_after_seconds = check_inbound_api_key_limit(api_key)
+		rpm_override: int | None = None
+		try:
+			policy = resolve_api_key_policy(api_key)
+			rpm_override = policy.requests_per_minute
+		except HTTPException as exc:
+			message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+			return JSONResponse(
+				status_code=exc.status_code,
+				content=_error_body(request, _code_for_http_status(exc.status_code), message),
+				headers={
+					"X-Request-ID": request.state.request_id,
+					"X-API-Version": settings.api_prefix.strip("/") or "v1",
+				},
+			)
+		except Exception:
+			logger.exception("API key policy resolution failed; falling back to global RPM")
+
+		allowed, retry_after_seconds = check_inbound_api_key_limit(api_key, requests_per_minute=rpm_override)
 		if not allowed:
 			return JSONResponse(
 				status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-				content={"detail": "API rate limit exceeded for this API key"},
-				headers={"Retry-After": str(retry_after_seconds)},
+				content=_error_body(
+					request,
+					"RATE_LIMIT_EXCEEDED",
+					"API rate limit exceeded for this API key",
+					retry_after_seconds=retry_after_seconds,
+				),
+				headers={
+					"Retry-After": str(retry_after_seconds),
+					"X-Request-ID": request.state.request_id,
+					"X-API-Version": settings.api_prefix.strip("/") or "v1",
+				},
 			)
-	return await call_next(request)
+
+		try:
+			quota = consume_monthly_quota(api_key)
+		except HTTPException as exc:
+			message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+			return JSONResponse(
+				status_code=exc.status_code,
+				content=_error_body(request, _code_for_http_status(exc.status_code), message),
+				headers={
+					"X-Request-ID": request.state.request_id,
+					"X-API-Version": settings.api_prefix.strip("/") or "v1",
+				},
+			)
+		except Exception:
+			logger.exception("Monthly API quota check failed; allowing request")
+			quota = None
+
+		if quota is not None:
+			quota_limit_header = str(quota.limit)
+			quota_remaining_header = str(quota.remaining)
+			quota_reset_header = str(int(quota.reset_at.timestamp()))
+
+			if quota.remaining <= 0 and not quota.consumed:
+				retry_after_seconds = max(1, int((quota.reset_at - datetime.now(UTC)).total_seconds()))
+				return JSONResponse(
+					status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+					content=_error_body(
+						request,
+						"QUOTA_EXCEEDED",
+						"Monthly API quota exceeded for this API key",
+						retry_after_seconds=retry_after_seconds,
+					),
+					headers={
+						"Retry-After": str(retry_after_seconds),
+						"X-Request-ID": request.state.request_id,
+						"X-API-Version": settings.api_prefix.strip("/") or "v1",
+						"X-RateLimit-Limit": quota_limit_header,
+						"X-RateLimit-Remaining": quota_remaining_header,
+						"X-RateLimit-Reset": quota_reset_header,
+					},
+				)
+
+	response = await call_next(request)
+	response.headers["X-Request-ID"] = request.state.request_id
+	response.headers["X-API-Version"] = settings.api_prefix.strip("/") or "v1"
+	if quota_limit_header is not None:
+		response.headers["X-RateLimit-Limit"] = quota_limit_header
+	if quota_remaining_header is not None:
+		response.headers["X-RateLimit-Remaining"] = quota_remaining_header
+	if quota_reset_header is not None:
+		response.headers["X-RateLimit-Reset"] = quota_reset_header
+	return response
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-	"""Return a flat 422 message instead of FastAPI's nested error structure."""
+	"""Return a flat 422 message and standardized envelope."""
 	errors = []
 	for error in exc.errors():
 		field = " -> ".join(str(loc) for loc in error["loc"] if loc != "body")
 		msg = error["msg"]
 		errors.append(f"{field}: {msg}" if field else msg)
+	message = "; ".join(errors)
 	return JSONResponse(
 		status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-		content={"detail": "; ".join(errors)},
+		content=_error_body(request, "VALIDATION_ERROR", message),
+		headers={
+			"X-Request-ID": _get_request_id(request),
+			"X-API-Version": settings.api_prefix.strip("/") or "v1",
+		},
 	)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+	"""Return standardized error envelope for explicit HTTP errors."""
+	message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+	body = _error_body(request, _code_for_http_status(exc.status_code), message)
+	headers = {
+		"X-Request-ID": _get_request_id(request),
+		"X-API-Version": settings.api_prefix.strip("/") or "v1",
+	}
+	if exc.headers:
+		headers.update(exc.headers)
+	return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
 
 
 @app.exception_handler(SQLAlchemyError)
@@ -85,7 +237,11 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -
 	logger.exception("Unhandled database error on %s %s", request.method, request.url.path)
 	return JSONResponse(
 		status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-		content={"detail": "A database error occurred. Please try again later."},
+		content=_error_body(request, "DATABASE_ERROR", "A database error occurred. Please try again later."),
+		headers={
+			"X-Request-ID": _get_request_id(request),
+			"X-API-Version": settings.api_prefix.strip("/") or "v1",
+		},
 	)
 
 
@@ -95,7 +251,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 	logger.exception("Unhandled error on %s %s", request.method, request.url.path)
 	return JSONResponse(
 		status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-		content={"detail": "An unexpected error occurred. Please try again later."},
+		content=_error_body(request, "INTERNAL_ERROR", "An unexpected error occurred. Please try again later."),
+		headers={
+			"X-Request-ID": _get_request_id(request),
+			"X-API-Version": settings.api_prefix.strip("/") or "v1",
+		},
 	)
 
 
