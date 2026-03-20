@@ -725,6 +725,138 @@ Authorization: Bearer <access_token>
 
 ---
 
+## 7.1 Developer Analytics
+
+Developer usage analytics computed from runtime request audit logs.
+
+### GET `/v1/developer/analytics/summary`
+Get aggregate usage metrics for a rolling window.
+
+**Headers**
+```
+Authorization: Bearer <access_token>
+```
+
+> Supports API key auth as well (`X-API-Key`), requiring scope `analytics.read`.
+
+**Query params**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `window_days` | int | `30` | Rolling window size (1..90) |
+
+**Response `200`**
+```json
+{
+  "window_days": 30,
+  "total_requests": 1240,
+  "error_requests": 35,
+  "error_rate": 0.028226,
+  "average_latency_ms": 92.47,
+  "p95_latency_ms": 240.0
+}
+```
+
+**Error cases**
+- `422` — Invalid `window_days`
+
+---
+
+### GET `/v1/developer/analytics/timeseries`
+Get time-bucketed usage metrics for charts.
+
+**Headers**
+```
+Authorization: Bearer <access_token>
+```
+
+> Supports API key auth as well (`X-API-Key`), requiring scope `analytics.read`.
+
+**Query params**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `window_days` | int | `30` | Rolling window size (1..90) |
+| `granularity` | string | `day` | Bucket size: `hour` or `day` |
+
+**Response `200`**
+```json
+{
+  "window_days": 7,
+  "granularity": "day",
+  "points": [
+    {
+      "bucket_start": "2026-03-14T00:00:00Z",
+      "total_requests": 142,
+      "error_requests": 4,
+      "error_rate": 0.028169,
+      "average_latency_ms": 88.35
+    },
+    {
+      "bucket_start": "2026-03-15T00:00:00Z",
+      "total_requests": 176,
+      "error_requests": 7,
+      "error_rate": 0.039773,
+      "average_latency_ms": 95.02
+    }
+  ]
+}
+```
+
+**Error cases**
+- `422` — Invalid `window_days`
+- `422` — Invalid `granularity` (must be `hour` or `day`)
+
+---
+
+### GET `/v1/developer/analytics/breakdown`
+Get grouped usage metrics by status bucket and top paths.
+
+**Headers**
+```
+Authorization: Bearer <access_token>
+```
+
+> Supports API key auth as well (`X-API-Key`), requiring scope `analytics.read`.
+
+**Query params**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `window_days` | int | `30` | Rolling window size (1..90) |
+| `top_paths` | int | `10` | Number of top request paths to return (1..50) |
+
+**Response `200`**
+```json
+{
+  "window_days": 30,
+  "status": [
+    { "status_bucket": "2xx", "requests": 1150 },
+    { "status_bucket": "4xx", "requests": 72 },
+    { "status_bucket": "5xx", "requests": 18 }
+  ],
+  "paths": [
+    {
+      "path": "/v1/search/",
+      "total_requests": 430,
+      "error_requests": 11,
+      "error_rate": 0.025581,
+      "average_latency_ms": 101.22
+    },
+    {
+      "path": "/v1/developer/analytics/summary",
+      "total_requests": 88,
+      "error_requests": 0,
+      "error_rate": 0.0,
+      "average_latency_ms": 47.15
+    }
+  ]
+}
+```
+
+**Error cases**
+- `422` — Invalid `window_days`
+- `422` — Invalid `top_paths` (must be 1..50)
+
+---
+
 ## 8. WebSocket
 
 ### WS `/ws`

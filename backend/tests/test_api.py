@@ -469,6 +469,234 @@ def test_search_rejects_x_api_key_when_scope_is_missing(monkeypatch):
 	app.dependency_overrides.clear()
 
 
+def test_connectors_list_uses_connectors_read_scope_for_api_key(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+
+	fake_db = FakeDb()
+	fake_db.next_rows = []
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=180))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=50000, remaining=49999, reset_at=datetime.now(UTC) + timedelta(days=7), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_connectors_read"
+		assert required_scope == "connectors.read"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/connectors/", headers={"X-API-Key": "pk_live_connectors_read"})
+
+	assert response.status_code == 200
+	assert response.json() == []
+	app.dependency_overrides.clear()
+
+
+def test_developer_create_key_uses_keys_write_scope_for_api_key(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+
+	fake_db = FakeDb()
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=180))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=50000, remaining=49999, reset_at=datetime.now(UTC) + timedelta(days=7), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_keys_write"
+		assert required_scope == "keys.write"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.post(
+		"/v1/developer/api-keys",
+		headers={"X-API-Key": "pk_live_keys_write"},
+		json={"name": "derived key", "plan_tier": "developer"},
+	)
+
+	assert response.status_code == 201
+	assert response.json()["api_key"].startswith("pk_live_")
+	app.dependency_overrides.clear()
+
+
+def test_access_log_writer_called_for_success_response(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(api_main, "_write_access_log", lambda request, status_code, latency_ms: setattr(request.state, "_logged_status", status_code))
+
+	client = TestClient(app)
+	response = client.get("/health")
+
+	assert response.status_code == 200
+
+
+def test_developer_analytics_summary_uses_analytics_read_scope_for_api_key(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+	from api.routers import developer as developer_router
+
+	fake_db = FakeDb()
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=180))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=50000, remaining=49999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_analytics_read"
+		assert required_scope == "analytics.read"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+	monkeypatch.setattr(
+		developer_router,
+		"_compute_usage_summary",
+		lambda db, user_id, window_days: developer_router.UsageSummaryResponse(
+			window_days=window_days,
+			total_requests=12,
+			error_requests=1,
+			error_rate=0.083333,
+			average_latency_ms=88.3,
+			p95_latency_ms=200.0,
+		),
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/developer/analytics/summary?window_days=14", headers={"X-API-Key": "pk_live_analytics_read"})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["window_days"] == 14
+	assert body["total_requests"] == 12
+	app.dependency_overrides.clear()
+
+
+def test_developer_analytics_timeseries_uses_analytics_read_scope_for_api_key(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+	from api.routers import developer as developer_router
+
+	fake_db = FakeDb()
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=180))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=50000, remaining=49999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_analytics_read"
+		assert required_scope == "analytics.read"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+	monkeypatch.setattr(
+		developer_router,
+		"_compute_usage_timeseries",
+		lambda db, user_id, window_days, granularity: developer_router.UsageTimeseriesResponse(
+			window_days=window_days,
+			granularity=granularity,
+			points=[
+				developer_router.TimeseriesPoint(
+					bucket_start=datetime.now(UTC),
+					total_requests=8,
+					error_requests=1,
+					error_rate=0.125,
+					average_latency_ms=75.4,
+				)
+			],
+		),
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/developer/analytics/timeseries?window_days=7&granularity=day", headers={"X-API-Key": "pk_live_analytics_read"})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["window_days"] == 7
+	assert body["granularity"] == "day"
+	assert len(body["points"]) == 1
+	app.dependency_overrides.clear()
+
+
+def test_developer_analytics_breakdown_uses_analytics_read_scope_for_api_key(monkeypatch):
+	from api import main as api_main
+	from api.core import auth as auth_core
+	from api.routers import developer as developer_router
+
+	fake_db = FakeDb()
+	user_id = uuid.uuid4()
+
+	monkeypatch.setattr(api_main, "resolve_api_key_policy", lambda _key: SimpleNamespace(requests_per_minute=180))
+	monkeypatch.setattr(api_main, "check_inbound_api_key_limit", lambda _key, requests_per_minute=None: (True, 0))
+	monkeypatch.setattr(
+		api_main,
+		"consume_monthly_quota",
+		lambda _key: SimpleNamespace(limit=50000, remaining=49999, reset_at=datetime.now(UTC) + timedelta(days=10), consumed=True),
+	)
+
+	def _fake_resolve_user_from_api_key(raw_api_key: str, db, required_scope: str | None):
+		assert raw_api_key == "pk_live_analytics_read"
+		assert required_scope == "analytics.read"
+		return SimpleNamespace(id=user_id)
+
+	monkeypatch.setattr(auth_core, "_resolve_user_from_api_key", _fake_resolve_user_from_api_key)
+	monkeypatch.setattr(
+		developer_router,
+		"_compute_usage_breakdown",
+		lambda db, user_id, window_days, top_paths: developer_router.UsageBreakdownResponse(
+			window_days=window_days,
+			status=[developer_router.StatusBreakdownItem(status_bucket="2xx", requests=15)],
+			paths=[
+				developer_router.PathBreakdownItem(
+					path="/v1/search/",
+					total_requests=10,
+					error_requests=1,
+					error_rate=0.1,
+					average_latency_ms=90.0,
+				)
+			],
+		),
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get("/v1/developer/analytics/breakdown?window_days=7&top_paths=5", headers={"X-API-Key": "pk_live_analytics_read"})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["window_days"] == 7
+	assert body["status"][0]["status_bucket"] == "2xx"
+	assert body["paths"][0]["path"] == "/v1/search/"
+	app.dependency_overrides.clear()
+
+
 def test_chat_history_supports_content_query_filter():
 	user_id = uuid.uuid4()
 	session_id = uuid.uuid4()

@@ -1,0 +1,191 @@
+name: Frontend Analytics Smoke
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-analytics-smoke.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-analytics-smoke.yml"
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Execution mode for manual run"
+        required: true
+        default: full
+        type: choice
+        options:
+          - fast
+          - full
+      browser_selection:
+        description: "Browser(s) for full mode (only used when run_mode=full)"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - chromium-only
+          - firefox-only
+          - webkit-only
+
+jobs:
+  analytics-smoke-fast:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_mode == 'fast')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser (Chromium fast gate)
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint dashboard analytics files
+        run: npm run lint -- app/dashboard/page.tsx lib/analytics-panel-telemetry.ts tests/analytics-dashboard.smoke.spec.ts
+
+      - name: Run analytics smoke test (Chromium)
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: npm run test:smoke:analytics -- --project=chromium
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analytics-smoke-playwright-artifacts-fast
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Notify Slack on failure
+        if: failure() && github.event.pull_request.draft == false && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -c "import json, os, urllib.request; msg='Frontend Analytics Smoke failed\nRepo: {repo}\nRef: {ref}\nActor: {actor}\nSHA: {sha}\nPR: {pr}\nRun: {run}'.format(repo=os.getenv('REPOSITORY',''), ref=os.getenv('REF_NAME',''), actor=os.getenv('ACTOR',''), sha=os.getenv('SHA','')[:12], pr=os.getenv('PR_TITLE','') or '(n/a)', run=os.getenv('RUN_URL','')); data=json.dumps({'text': msg}).encode(); req=urllib.request.Request(os.environ['SLACK_WEBHOOK_URL'], data=data, headers={'Content-Type':'application/json'}); urllib.request.urlopen(req).read()"
+
+      - name: Notify Teams on failure
+        if: failure() && github.event.pull_request.draft == false && secrets.TEAMS_WEBHOOK_URL != ''
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -c "import json, os, urllib.request; msg='Frontend Analytics Smoke failed\nRepo: {repo}\nRef: {ref}\nActor: {actor}\nSHA: {sha}\nPR: {pr}\nRun: {run}'.format(repo=os.getenv('REPOSITORY',''), ref=os.getenv('REF_NAME',''), actor=os.getenv('ACTOR',''), sha=os.getenv('SHA','')[:12], pr=os.getenv('PR_TITLE','') or '(n/a)', run=os.getenv('RUN_URL','')); data=json.dumps({'text': msg}).encode(); req=urllib.request.Request(os.environ['TEAMS_WEBHOOK_URL'], data=data, headers={'Content-Type':'application/json'}); urllib.request.urlopen(req).read()"
+
+  analytics-smoke-full:
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_mode == 'full')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine browsers to install
+        id: browser-decision
+        run: |
+          if [[ "${{ inputs.browser_selection }}" == "chromium-only" ]]; then
+            echo "browsers=chromium" >> $GITHUB_OUTPUT
+            echo "browser_arg=--project=chromium" >> $GITHUB_OUTPUT
+          elif [[ "${{ inputs.browser_selection }}" == "firefox-only" ]]; then
+            echo "browsers=firefox" >> $GITHUB_OUTPUT
+            echo "browser_arg=--project=firefox" >> $GITHUB_OUTPUT
+          elif [[ "${{ inputs.browser_selection }}" == "webkit-only" ]]; then
+            echo "browsers=webkit" >> $GITHUB_OUTPUT
+            echo "browser_arg=--project=webkit" >> $GITHUB_OUTPUT
+          else
+            echo "browsers=chromium firefox webkit" >> $GITHUB_OUTPUT
+            echo "browser_arg=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Playwright browsers (full cross-browser)
+        run: npx playwright install --with-deps ${{ steps.browser-decision.outputs.browsers }}
+
+      - name: Lint dashboard analytics files
+        run: npm run lint -- app/dashboard/page.tsx lib/analytics-panel-telemetry.ts tests/analytics-dashboard.smoke.spec.ts
+
+      - name: Run analytics smoke test (all browsers)
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: npm run test:smoke:analytics ${{ steps.browser-decision.outputs.browser_arg }}
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analytics-smoke-playwright-artifacts-full
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Notify Slack on failure
+        if: failure() && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -c "import json, os, urllib.request; msg='Frontend Analytics Smoke failed\nRepo: {repo}\nRef: {ref}\nActor: {actor}\nSHA: {sha}\nPR: {pr}\nRun: {run}'.format(repo=os.getenv('REPOSITORY',''), ref=os.getenv('REF_NAME',''), actor=os.getenv('ACTOR',''), sha=os.getenv('SHA','')[:12], pr=os.getenv('PR_TITLE','') or '(n/a)', run=os.getenv('RUN_URL','')); data=json.dumps({'text': msg}).encode(); req=urllib.request.Request(os.environ['SLACK_WEBHOOK_URL'], data=data, headers={'Content-Type':'application/json'}); urllib.request.urlopen(req).read()"
+
+      - name: Notify Teams on failure
+        if: failure() && secrets.TEAMS_WEBHOOK_URL != ''
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -c "import json, os, urllib.request; msg='Frontend Analytics Smoke failed\nRepo: {repo}\nRef: {ref}\nActor: {actor}\nSHA: {sha}\nPR: {pr}\nRun: {run}'.format(repo=os.getenv('REPOSITORY',''), ref=os.getenv('REF_NAME',''), actor=os.getenv('ACTOR',''), sha=os.getenv('SHA','')[:12], pr=os.getenv('PR_TITLE','') or '(n/a)', run=os.getenv('RUN_URL','')); data=json.dumps({'text': msg}).encode(); req=urllib.request.Request(os.environ['TEAMS_WEBHOOK_URL'], data=data, headers={'Content-Type':'application/json'}); urllib.request.urlopen(req).read()"

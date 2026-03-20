@@ -2,6 +2,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+import math
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
@@ -12,6 +13,7 @@ from api.core.api_plans import get_plan_tier_spec, list_plan_tiers
 from api.core.auth import get_current_user
 from api.core.db import get_db
 from api.core.security import normalize_scopes
+from api.models.access_log import AccessLog
 from api.models.api_key import ApiKey
 from api.models.user import User
 
@@ -72,6 +74,177 @@ class ApiKeyListItem(BaseModel):
 	last_used_at: datetime | None = None
 	expires_at: datetime | None = None
 	revoked_at: datetime | None = None
+
+
+class UsageSummaryResponse(BaseModel):
+	window_days: int
+	total_requests: int
+	error_requests: int
+	error_rate: float
+	average_latency_ms: float | None = None
+	p95_latency_ms: float | None = None
+
+
+class TimeseriesPoint(BaseModel):
+	bucket_start: datetime
+	total_requests: int
+	error_requests: int
+	error_rate: float
+	average_latency_ms: float | None = None
+
+
+class UsageTimeseriesResponse(BaseModel):
+	window_days: int
+	granularity: str
+	points: list[TimeseriesPoint]
+
+
+class StatusBreakdownItem(BaseModel):
+	status_bucket: str
+	requests: int
+
+
+class PathBreakdownItem(BaseModel):
+	path: str
+	total_requests: int
+	error_requests: int
+	error_rate: float
+	average_latency_ms: float | None = None
+
+
+class UsageBreakdownResponse(BaseModel):
+	window_days: int
+	status: list[StatusBreakdownItem]
+	paths: list[PathBreakdownItem]
+
+
+def _validate_window_days(window_days: int) -> None:
+	if window_days < 1 or window_days > 90:
+		raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="window_days must be between 1 and 90")
+
+
+def _load_usage_logs(db: Session, user_id: uuid.UUID, window_days: int) -> list[AccessLog]:
+	window_start = datetime.now(UTC) - timedelta(days=window_days)
+	return db.execute(
+		select(AccessLog).where(
+			AccessLog.user_id == user_id,
+			AccessLog.created_at >= window_start,
+		)
+	).scalars().all()
+
+
+def _to_utc(dt: datetime) -> datetime:
+	if dt.tzinfo is None:
+		return dt.replace(tzinfo=UTC)
+	return dt.astimezone(UTC)
+
+
+def _bucket_start_for(ts: datetime, granularity: str) -> datetime:
+	if granularity == "hour":
+		return ts.replace(minute=0, second=0, microsecond=0)
+	return ts.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _compute_usage_summary(db: Session, user_id: uuid.UUID, window_days: int) -> UsageSummaryResponse:
+	logs = _load_usage_logs(db=db, user_id=user_id, window_days=window_days)
+
+	total_requests = len(logs)
+	error_requests = sum(1 for row in logs if int(row.status_code) >= 400)
+	error_rate = (error_requests / total_requests) if total_requests > 0 else 0.0
+
+	latencies = sorted(int(row.latency_ms) for row in logs if row.latency_ms is not None)
+	average_latency_ms = (sum(latencies) / len(latencies)) if latencies else None
+	p95_latency_ms: float | None = None
+	if latencies:
+		index = max(0, math.ceil(0.95 * len(latencies)) - 1)
+		p95_latency_ms = float(latencies[index])
+
+	return UsageSummaryResponse(
+		window_days=window_days,
+		total_requests=total_requests,
+		error_requests=error_requests,
+		error_rate=float(round(error_rate, 6)),
+		average_latency_ms=float(round(average_latency_ms, 2)) if average_latency_ms is not None else None,
+		p95_latency_ms=p95_latency_ms,
+	)
+
+
+def _compute_usage_timeseries(db: Session, user_id: uuid.UUID, window_days: int, granularity: str) -> UsageTimeseriesResponse:
+	logs = _load_usage_logs(db=db, user_id=user_id, window_days=window_days)
+	buckets: dict[datetime, list[AccessLog]] = {}
+
+	for row in logs:
+		if row.created_at is None:
+			continue
+		bucket_start = _bucket_start_for(_to_utc(row.created_at), granularity)
+		buckets.setdefault(bucket_start, []).append(row)
+
+	points: list[TimeseriesPoint] = []
+	for bucket_start in sorted(buckets.keys()):
+		entries = buckets[bucket_start]
+		total_requests = len(entries)
+		error_requests = sum(1 for entry in entries if int(entry.status_code) >= 400)
+		error_rate = (error_requests / total_requests) if total_requests > 0 else 0.0
+		latencies = [int(entry.latency_ms) for entry in entries if entry.latency_ms is not None]
+		average_latency_ms = (sum(latencies) / len(latencies)) if latencies else None
+		points.append(
+			TimeseriesPoint(
+				bucket_start=bucket_start,
+				total_requests=total_requests,
+				error_requests=error_requests,
+				error_rate=float(round(error_rate, 6)),
+				average_latency_ms=float(round(average_latency_ms, 2)) if average_latency_ms is not None else None,
+			)
+		)
+
+	return UsageTimeseriesResponse(window_days=window_days, granularity=granularity, points=points)
+
+
+def _compute_usage_breakdown(db: Session, user_id: uuid.UUID, window_days: int, top_paths: int) -> UsageBreakdownResponse:
+	logs = _load_usage_logs(db=db, user_id=user_id, window_days=window_days)
+
+	status_buckets: dict[str, int] = {}
+	path_stats: dict[str, dict[str, float]] = {}
+
+	for row in logs:
+		status_bucket = f"{int(row.status_code) // 100}xx"
+		status_buckets[status_bucket] = status_buckets.get(status_bucket, 0) + 1
+
+		path = row.path or "unknown"
+		stats = path_stats.setdefault(path, {"total": 0.0, "errors": 0.0, "latency_sum": 0.0, "latency_count": 0.0})
+		stats["total"] += 1
+		if int(row.status_code) >= 400:
+			stats["errors"] += 1
+		if row.latency_ms is not None:
+			stats["latency_sum"] += float(row.latency_ms)
+			stats["latency_count"] += 1
+
+	status_items = [
+		StatusBreakdownItem(status_bucket=bucket, requests=count)
+		for bucket, count in sorted(status_buckets.items(), key=lambda item: item[0])
+	]
+
+	ordered_paths = sorted(path_stats.items(), key=lambda item: (int(item[1]["total"]), item[0]), reverse=True)
+	path_items: list[PathBreakdownItem] = []
+	for path, stats in ordered_paths[:top_paths]:
+		total_requests = int(stats["total"])
+		error_requests = int(stats["errors"])
+		error_rate = (error_requests / total_requests) if total_requests > 0 else 0.0
+		average_latency_ms = None
+		if stats["latency_count"] > 0:
+			average_latency_ms = float(round(stats["latency_sum"] / stats["latency_count"], 2))
+
+		path_items.append(
+			PathBreakdownItem(
+				path=path,
+				total_requests=total_requests,
+				error_requests=error_requests,
+				error_rate=float(round(error_rate, 6)),
+				average_latency_ms=average_latency_ms,
+			)
+		)
+
+	return UsageBreakdownResponse(window_days=window_days, status=status_items, paths=path_items)
 
 
 def _hash_api_key(raw_key: str) -> str:
@@ -218,4 +391,46 @@ def revoke_api_key(
 		expires_at=api_key.expires_at,
 		revoked_at=api_key.revoked_at,
 	)
+
+
+@router.get("/analytics/summary", response_model=UsageSummaryResponse)
+def usage_summary(
+	window_days: int = 30,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+) -> UsageSummaryResponse:
+	_validate_window_days(window_days)
+	return _compute_usage_summary(db=db, user_id=current_user.id, window_days=window_days)
+
+
+@router.get("/analytics/timeseries", response_model=UsageTimeseriesResponse)
+def usage_timeseries(
+	window_days: int = 30,
+	granularity: str = "day",
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+) -> UsageTimeseriesResponse:
+	_validate_window_days(window_days)
+	granularity_normalized = (granularity or "day").strip().lower()
+	if granularity_normalized not in {"hour", "day"}:
+		raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="granularity must be one of: hour, day")
+	return _compute_usage_timeseries(
+		db=db,
+		user_id=current_user.id,
+		window_days=window_days,
+		granularity=granularity_normalized,
+	)
+
+
+@router.get("/analytics/breakdown", response_model=UsageBreakdownResponse)
+def usage_breakdown(
+	window_days: int = 30,
+	top_paths: int = 10,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+) -> UsageBreakdownResponse:
+	_validate_window_days(window_days)
+	if top_paths < 1 or top_paths > 50:
+		raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="top_paths must be between 1 and 50")
+	return _compute_usage_breakdown(db=db, user_id=current_user.id, window_days=window_days, top_paths=top_paths)
 

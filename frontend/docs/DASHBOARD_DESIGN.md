@@ -25,6 +25,28 @@ The dashboard is the authenticated area for managing data and connectors.
 *   **Welcome Message**: "Good morning, [User]."
 *   **Quick Stats**: "1,204 Documents Indexed", "5 Connected Apps".
 *   **Recent Activity**: List of latest synced items.
+*   **Developer Analytics Panel**:
+    *   Window selector chips: `7d`, `30d`, `90d`.
+    *   Granularity selector chips: `hour`, `day`.
+    *   KPI cards for requests, error rate, average latency, and p95 latency.
+    *   Trend chart for request volume over time.
+    *   Status and top-path breakdown lists.
+    *   Skeleton placeholders while loading and dashed-card empty states when data is unavailable.
+
+#### Developer Analytics Data Mapping
+
+*   **Summary endpoint** (`GET /v1/developer/analytics/summary`)
+    *   `total_requests` -> Requests KPI
+    *   `error_rate` -> Error Rate KPI
+    *   `average_latency_ms` -> Avg Latency KPI
+    *   `p95_latency_ms` -> P95 Latency KPI
+*   **Timeseries endpoint** (`GET /v1/developer/analytics/timeseries`)
+    *   `points[].bucket_start` -> chart x-axis
+    *   `points[].total_requests` -> volume line
+    *   `points[].error_requests` -> errors line
+*   **Breakdown endpoint** (`GET /v1/developer/analytics/breakdown`)
+    *   `status[]` -> status bucket summary
+    *   `paths[]` -> top endpoints list with error/latency columns
 
 ### Search Page
 *   **Central Input**: Large search bar (Cmd+K style).

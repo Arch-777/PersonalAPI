@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime
+from time import perf_counter
 from importlib import import_module
 from contextlib import asynccontextmanager
 
@@ -12,9 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from api.core.db import check_database_connection
+from api.core.db import SessionLocal
 from api.core.api_key_quota import consume_monthly_quota, resolve_api_key_policy
 from api.core.config import get_settings
 from api.core.rate_limit import check_inbound_api_key_limit
+from api.models.access_log import AccessLog
 from rag.generator import check_ollama_readiness
 
 
@@ -69,6 +72,35 @@ def _code_for_http_status(status_code: int) -> str:
 	return "INTERNAL_ERROR" if status_code >= 500 else "BAD_REQUEST"
 
 
+def _write_access_log(request: Request, status_code: int, latency_ms: int | None) -> None:
+	"""Best-effort access log persistence for analytics and audit trails."""
+	db = SessionLocal()
+	try:
+		user_id = getattr(request.state, "auth_user_id", None)
+		api_key_id = getattr(request.state, "auth_api_key_id", None)
+		request_id = _get_request_id(request)
+		client_ip = request.client.host if request.client else None
+		user_agent = request.headers.get("user-agent")
+
+		log_row = AccessLog(
+			user_id=user_id,
+			api_key_id=api_key_id,
+			request_id=request_id,
+			method=request.method,
+			path=request.url.path,
+			status_code=int(status_code),
+			latency_ms=latency_ms,
+			client_ip=client_ip,
+			user_agent=user_agent,
+		)
+		db.add(log_row)
+		db.commit()
+	except Exception:
+		logger.exception("Access log write failed for %s %s", request.method, request.url.path)
+	finally:
+		db.close()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
 	try:
@@ -105,6 +137,7 @@ app.add_middleware(
 async def request_context_and_rate_limit(request: Request, call_next):
 	incoming_request_id = request.headers.get("x-request-id", "").strip()
 	request.state.request_id = incoming_request_id or f"req_{uuid.uuid4().hex}"
+	request_started_at = perf_counter()
 	quota_limit_header: str | None = None
 	quota_remaining_header: str | None = None
 	quota_reset_header: str | None = None
@@ -130,6 +163,8 @@ async def request_context_and_rate_limit(request: Request, call_next):
 
 		allowed, retry_after_seconds = check_inbound_api_key_limit(api_key, requests_per_minute=rpm_override)
 		if not allowed:
+			latency_ms = int((perf_counter() - request_started_at) * 1000)
+			_write_access_log(request, status.HTTP_429_TOO_MANY_REQUESTS, latency_ms)
 			return JSONResponse(
 				status_code=status.HTTP_429_TOO_MANY_REQUESTS,
 				content=_error_body(
@@ -148,6 +183,8 @@ async def request_context_and_rate_limit(request: Request, call_next):
 		try:
 			quota = consume_monthly_quota(api_key)
 		except HTTPException as exc:
+			latency_ms = int((perf_counter() - request_started_at) * 1000)
+			_write_access_log(request, exc.status_code, latency_ms)
 			message = exc.detail if isinstance(exc.detail, str) else "Request failed"
 			return JSONResponse(
 				status_code=exc.status_code,
@@ -168,6 +205,8 @@ async def request_context_and_rate_limit(request: Request, call_next):
 
 			if quota.remaining <= 0 and not quota.consumed:
 				retry_after_seconds = max(1, int((quota.reset_at - datetime.now(UTC)).total_seconds()))
+				latency_ms = int((perf_counter() - request_started_at) * 1000)
+				_write_access_log(request, status.HTTP_429_TOO_MANY_REQUESTS, latency_ms)
 				return JSONResponse(
 					status_code=status.HTTP_429_TOO_MANY_REQUESTS,
 					content=_error_body(
@@ -187,6 +226,8 @@ async def request_context_and_rate_limit(request: Request, call_next):
 				)
 
 	response = await call_next(request)
+	latency_ms = int((perf_counter() - request_started_at) * 1000)
+	_write_access_log(request, response.status_code, latency_ms)
 	response.headers["X-Request-ID"] = request.state.request_id
 	response.headers["X-API-Version"] = settings.api_prefix.strip("/") or "v1"
 	if quota_limit_header is not None:

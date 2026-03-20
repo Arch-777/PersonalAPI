@@ -20,15 +20,33 @@ def _hash_api_key(raw_key: str) -> str:
 	return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def _required_scope_for_rest_path(path: str) -> str | None:
+def _required_scope_for_rest_path(path: str, method: str) -> str | None:
 	"""Map REST routes to API-key scopes for API-key authenticated requests."""
 	normalized = (path or "").strip().lower()
+	normalized_method = (method or "").strip().upper()
+
 	if normalized.startswith("/v1/search"):
 		return "data.read"
 	if normalized.startswith("/v1/emails"):
 		return "data.read"
 	if normalized.startswith("/v1/documents"):
 		return "data.read"
+
+	if normalized.startswith("/v1/connectors"):
+		if normalized_method == "GET":
+			return "connectors.read"
+		if normalized_method in {"POST", "PATCH", "DELETE"}:
+			return "connectors.write"
+
+	if normalized.startswith("/v1/developer/api-keys"):
+		if normalized_method == "GET":
+			return "keys.read"
+		if normalized_method == "POST":
+			return "keys.write"
+
+	if normalized.startswith("/v1/developer/analytics") and normalized_method == "GET":
+		return "analytics.read"
+
 	return None
 
 
@@ -86,12 +104,21 @@ def get_current_user(
 	db: Session = Depends(get_db),
 ) -> User:
 	if credentials is not None:
-		return _resolve_user_from_jwt(credentials.credentials, db)
+		user = _resolve_user_from_jwt(credentials.credentials, db)
+		request.state.auth_user_id = str(user.id)
+		request.state.auth_api_key_id = None
+		request.state.auth_method = "jwt"
+		return user
 
 	header_api_key = (x_api_key or "").strip()
 	if header_api_key:
-		required_scope = _required_scope_for_rest_path(request.url.path)
-		return _resolve_user_from_api_key(header_api_key, db, required_scope)
+		required_scope = _required_scope_for_rest_path(request.url.path, request.method)
+		user = _resolve_user_from_api_key(header_api_key, db, required_scope)
+		request.state.auth_user_id = str(user.id)
+		request.state.auth_method = "api_key"
+		api_key = db.execute(select(ApiKey.id).where(ApiKey.key_hash == _hash_api_key(header_api_key))).scalar_one_or_none()
+		request.state.auth_api_key_id = str(api_key) if api_key else None
+		return user
 
 	raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing credentials")
 
